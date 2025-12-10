@@ -11,12 +11,21 @@ DATA_DIR_NAME = "Data"
 
 def parse_numeric_columns(csv_path: str):
     """
-    Parse a CSV where the header row lists column names and the next row lists units.
-    Returns dicts: columns[name] -> list[float], units[name] -> unit string (or "").
+    Parse a CSV file that uses the pattern:
+        header row: column names (e.g., Time,Field,X,Y,R,theta)
+        units row : units for each column (e.g., s,Oe,V,V,V,deg)
+        data rows : numeric values
+
+    Returns two dicts:
+        columns[name] -> list of float values
+        units[name]   -> unit string (or empty if missing)
     """
     with open(csv_path, newline="") as handle:
+        # Remove blank lines so the CSV reader only sees meaningful rows
         lines = [line.strip() for line in handle if line.strip()]
 
+    # Pick a header row. Prefer a row containing "field" to match the provided data,
+    # otherwise fall back to the first comma-separated row.
     header_index = next(
         (idx for idx, line in enumerate(lines) if "," in line and "field" in line.lower()),
         None,
@@ -26,24 +35,28 @@ def parse_numeric_columns(csv_path: str):
     if header_index is None:
         raise ValueError("Could not find a header row with comma-separated columns.")
 
+    # Create a CSV reader from the header forward; rows are simple lists at this point.
     reader = csv.reader(lines[header_index:])
     try:
         header = next(reader)
     except StopIteration:
         raise ValueError("File ended before reading header.")  # noqa: TRY200
 
+    # Try to read a units row (must match header width). If it looks wrong, ignore it.
     units_row = next(reader, None)
     if units_row and len(units_row) != len(header):
-        units_row = None  # ignore a mismatched units row
+        units_row = None
 
-    data_rows = list(reader)
+    data_rows = list(reader)  # Everything after header (+optional units) is data
 
+    # Seed dicts with column names and (optional) units
     columns = {name.strip(): [] for name in header}
     units = {
         name.strip(): (units_row[idx].strip() if units_row and idx < len(units_row) else "")
         for idx, name in enumerate(header)
     }
 
+    # Parse numeric rows; any row that fails float conversion is skipped
     for row in data_rows:
         if len(row) < len(header):
             continue
@@ -54,6 +67,7 @@ def parse_numeric_columns(csv_path: str):
         for name, value in zip(header, values):
             columns[name.strip()].append(value)
 
+    # Drop columns that never produced numeric data and align units accordingly
     columns = {name: vals for name, vals in columns.items() if vals}
     units = {name: units.get(name, "") for name in columns}
     return columns, units
@@ -64,22 +78,27 @@ class FMRPreview(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle("FMR CSV Preview")
         self.data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), DATA_DIR_NAME)
-        self.columns = {}
-        self.units = {}
-        self.display_to_column = {}
-        self._suppress_combo = False
-        self._last_x_display = ""
-        self._last_y_display = ""
 
+        # In-memory state for the loaded CSV
+        self.columns = {}  # column name -> list[float]
+        self.units = {}  # column name -> unit string
+        self.display_to_column = {}  # "Field (Oe)" -> "Field"
+        self._suppress_combo = False  # guard to prevent signal loops while we adjust combos
+        self._last_x_display = ""  # previous X selection (for swap logic)
+        self._last_y_display = ""  # previous Y selection (for swap logic)
+
+        # PyQtGraph plot surface
         self.plot_widget = pg.PlotWidget(background="w")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.setLabel("left", "X (V)")
         self.plot_widget.setLabel("bottom", "Field (Oe)")
 
+        # File label + button to pick a CSV
         self.file_label = QtWidgets.QLabel("No file loaded")
         self.open_button = QtWidgets.QPushButton("Open CSV...")
         self.open_button.clicked.connect(self.choose_file)
 
+        # Axis selectors. Each combo shows column names (with units when available).
         self.x_combo = QtWidgets.QComboBox()
         self.y_combo = QtWidgets.QComboBox()
         self.x_combo.currentTextChanged.connect(self.on_x_changed)
@@ -110,6 +129,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.load_first_csv_if_present()
 
     def choose_file(self):
+        """Open a file dialog and load the chosen CSV."""
         start_dir = self.data_dir if os.path.isdir(self.data_dir) else os.getcwd()
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
@@ -121,12 +141,14 @@ class FMRPreview(QtWidgets.QMainWindow):
             self.load_and_plot(path)
 
     def load_first_csv_if_present(self):
+        """Auto-load the first CSV in Data/ so the window is immediately useful."""
         pattern = os.path.join(self.data_dir, "*.csv")
         csv_files = sorted(glob.glob(pattern))
         if csv_files:
             self.load_and_plot(csv_files[0])
 
     def load_and_plot(self, path: str):
+        """Parse a file, populate selectors, and render the plot."""
         try:
             columns, units = parse_numeric_columns(path)
         except Exception as exc:  # noqa: BLE001
@@ -139,13 +161,14 @@ class FMRPreview(QtWidgets.QMainWindow):
 
         self.columns = columns
         self.units = units
-        self.populate_axis_choices()
-        self.update_plot()
+        self.populate_axis_choices()  # fills combos and sets defaults
+        self.update_plot()  # draw initial plot based on defaults
 
         self.plot_widget.setTitle(os.path.basename(path))
         self.file_label.setText(path)
 
     def populate_axis_choices(self):
+        """Fill the X/Y combos with available columns and pick sensible defaults."""
         self._suppress_combo = True
         self.x_combo.clear()
         self.y_combo.clear()
@@ -165,10 +188,12 @@ class FMRPreview(QtWidgets.QMainWindow):
             self.x_combo.addItem(label)
             self.y_combo.addItem(label)
 
+        # Default X: prefer "Field" if present; otherwise first column
         default_x = next(
             (lbl for lbl in display_names if self.display_to_column[lbl].lower() == "field"),
             display_names[0],
         )
+        # Default Y: prefer "X" or "Y" (whichever is available and not the same as X)
         default_y = next(
             (
                 lbl
@@ -188,10 +213,12 @@ class FMRPreview(QtWidgets.QMainWindow):
         self._suppress_combo = False
 
     def on_x_changed(self, new_display: str):
+        """Handle X combo changes, swapping axes if the selection collides with Y."""
         if self._suppress_combo:
             return
         current_y = self.y_combo.currentText()
         if new_display and new_display == current_y:
+            # Keep axes distinct by swapping when the same item is chosen
             self._suppress_combo = True
             self.y_combo.setCurrentText(self._last_x_display)
             self._suppress_combo = False
@@ -200,10 +227,12 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.update_plot()
 
     def on_y_changed(self, new_display: str):
+        """Handle Y combo changes, swapping axes if the selection collides with X."""
         if self._suppress_combo:
             return
         current_x = self.x_combo.currentText()
         if new_display and new_display == current_x:
+            # Keep axes distinct by swapping when the same item is chosen
             self._suppress_combo = True
             self.x_combo.setCurrentText(self._last_y_display)
             self._suppress_combo = False
@@ -212,6 +241,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.update_plot()
 
     def update_plot(self):
+        """Render the current column selections onto the plot widget."""
         if not self.columns:
             return
         x_label = self.x_combo.currentText()
