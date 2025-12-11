@@ -148,6 +148,11 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.phase_dial.setNotchesVisible(True)
         self.phase_dial.valueChanged.connect(self.on_phase_dial_changed)
 
+        self.phase_plus_button = QtWidgets.QPushButton("+90°")
+        self.phase_plus_button.clicked.connect(self.on_phase_plus_90)
+        self.phase_minus_button = QtWidgets.QPushButton("-90°")
+        self.phase_minus_button.clicked.connect(self.on_phase_minus_90)
+
         self.phase_spin = QtWidgets.QDoubleSpinBox()
         self.phase_spin.setDecimals(2)
         self.phase_spin.setRange(-180.0, 180.0)
@@ -165,10 +170,19 @@ class FMRPreview(QtWidgets.QMainWindow):
         phase_spin_row.addWidget(self.phase_spin)
         phase_spin_row.addWidget(self.guess_phase_button)
         phase_spin_row.addWidget(self.reset_phase_button)
-        phase_spin_row.addStretch()
+        # phase_spin_row.addStretch()
+
+        dial_buttons_col = QtWidgets.QVBoxLayout()
+        # dial_buttons_col.addStretch()
+        dial_buttons_col.addWidget(self.phase_plus_button)
+        dial_buttons_col.addSpacing(6)
+        dial_buttons_col.addWidget(self.phase_minus_button)
+        # dial_buttons_col.addStretch()
 
         phase_dial_row = QtWidgets.QHBoxLayout()
         phase_dial_row.addWidget(self.phase_dial)
+        phase_dial_row.addSpacing(6)
+        phase_dial_row.addLayout(dial_buttons_col)
         phase_dial_row.addStretch()
 
         # Sweep error correction control (suggested from dField/dt near 25%)
@@ -402,6 +416,14 @@ class FMRPreview(QtWidgets.QMainWindow):
     def on_reset_phase(self):
         """Reset phase angle to zero."""
         self.set_phase(0.0)
+
+    def on_phase_plus_90(self):
+        """Increment phase by +90 degrees."""
+        self.set_phase(self.current_phase_deg + 90.0)
+
+    def on_phase_minus_90(self):
+        """Decrement phase by -90 degrees."""
+        self.set_phase(self.current_phase_deg - 90.0)
 
     def update_plot(self):
         """Render the current column selections onto the plot widget."""
