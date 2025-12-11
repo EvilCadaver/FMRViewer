@@ -9,6 +9,9 @@ import pyqtgraph as pg
 # Lightweight CSV plotting helper with optional derivative/integral overlay
 
 DATA_DIR_NAME = "Data"
+SWEEP_ERROR_COEFFICIENT = 0.38
+IGNORE_DIRECTION_POINTS = 10  # points at start assumed positive sweep
+PHASE_CUTOFF_FIELD = 500  # Oe to estimate initial phase
 
 
 def parse_numeric_columns(csv_path: str):
@@ -90,6 +93,11 @@ class FMRPreview(QtWidgets.QMainWindow):
         self._last_x_display = ""  # previous X selection (for swap logic)
         self._last_y_display = ""  # previous Y selection (for swap logic)
         self._secondary_curve = None  # plot item for derivative/integral overlay
+        self.direction_data = []  # derived +1/-1 sweep direction
+        self.current_phase_deg = 0.0
+        self._suppress_phase = False
+        self.current_file_path = ""
+        self._rotated_xy = None
 
         # PyQtGraph plot surface
         self.plot_widget = pg.PlotWidget(background="w")
@@ -106,8 +114,10 @@ class FMRPreview(QtWidgets.QMainWindow):
         plot_item.vb.sigResized.connect(self.update_secondary_view_bounds)
         self.update_secondary_view_bounds()
 
-        # File label + button to pick a CSV
-        self.file_label = QtWidgets.QLabel("No file loaded")
+        # File path (selectable) + button to pick a CSV
+        self.file_path_edit = QtWidgets.QLineEdit("No file loaded")
+        self.file_path_edit.setReadOnly(True)
+        self.file_path_edit.setMinimumWidth(300)
         self.open_button = QtWidgets.QPushButton("Open CSV...")
         self.open_button.clicked.connect(self.choose_file)
         self.last_viewed_dir = None  # remember last folder visited during this session
@@ -132,6 +142,48 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.derivative_checkbox.stateChanged.connect(self.on_derivative_toggled)
         self.integral_checkbox.stateChanged.connect(self.on_integral_toggled)
 
+        # Phase rotation controls for X+iY
+        self.phase_dial = QtWidgets.QDial()
+        self.phase_dial.setRange(-180, 180)
+        self.phase_dial.setNotchesVisible(True)
+        self.phase_dial.valueChanged.connect(self.on_phase_dial_changed)
+
+        self.phase_spin = QtWidgets.QDoubleSpinBox()
+        self.phase_spin.setDecimals(2)
+        self.phase_spin.setRange(-180.0, 180.0)
+        self.phase_spin.setSingleStep(1.0)
+        self.phase_spin.valueChanged.connect(self.on_phase_spin_changed)
+        self.set_phase(0.0, update=False)
+
+        self.guess_phase_button = QtWidgets.QPushButton("Guess phase")
+        self.guess_phase_button.clicked.connect(self.on_guess_phase)
+        self.reset_phase_button = QtWidgets.QPushButton("Reset phase")
+        self.reset_phase_button.clicked.connect(self.on_reset_phase)
+
+        phase_spin_row = QtWidgets.QHBoxLayout()
+        phase_spin_row.addWidget(QtWidgets.QLabel("Phase shift (deg):"))
+        phase_spin_row.addWidget(self.phase_spin)
+        phase_spin_row.addWidget(self.guess_phase_button)
+        phase_spin_row.addWidget(self.reset_phase_button)
+        phase_spin_row.addStretch()
+
+        phase_dial_row = QtWidgets.QHBoxLayout()
+        phase_dial_row.addWidget(self.phase_dial)
+        phase_dial_row.addStretch()
+
+        # Sweep error correction control (suggested from dField/dt near 25%)
+        self.sweep_error_spin = QtWidgets.QDoubleSpinBox()
+        self.sweep_error_spin.setDecimals(0)
+        self.sweep_error_spin.setRange(0, 1000)
+        self.sweep_error_spin.setSingleStep(1)
+        self.sweep_error_spin.valueChanged.connect(self.update_plot)
+
+        sweep_row = QtWidgets.QHBoxLayout()
+        sweep_row.addWidget(QtWidgets.QLabel("Sweep error shift:"))
+        sweep_row.addWidget(self.sweep_error_spin)
+        sweep_row.addWidget(QtWidgets.QLabel("(Field - Direction * error)"))
+        sweep_row.addStretch()
+
         options_row = QtWidgets.QHBoxLayout()
         options_row.addWidget(self.derivative_checkbox)
         options_row.addSpacing(12)
@@ -139,15 +191,29 @@ class FMRPreview(QtWidgets.QMainWindow):
         options_row.addStretch()
 
         top_row = QtWidgets.QHBoxLayout()
-        top_row.addWidget(self.file_label)
-        top_row.addStretch()
+        top_row.addWidget(self.file_path_edit, 1)
         top_row.addWidget(self.open_button)
+
+        left_col = QtWidgets.QVBoxLayout()
+        left_col.addLayout(axes_row)
+        left_col.addLayout(options_row)
+        left_col.addLayout(sweep_row)
+        left_col.addLayout(phase_spin_row)
+        left_col.addLayout(phase_dial_row)
+        left_col.addStretch()
+
+        controls_row = QtWidgets.QHBoxLayout()
+        controls_row.addLayout(left_col)
+        controls_row.addSpacing(12)
+        controls_row.addStretch()
+
+        body_row = QtWidgets.QHBoxLayout()
+        body_row.addWidget(self.plot_widget, 1)
+        body_row.addLayout(controls_row)
 
         layout = QtWidgets.QVBoxLayout()
         layout.addLayout(top_row)
-        layout.addLayout(axes_row)
-        layout.addLayout(options_row)
-        layout.addWidget(self.plot_widget)
+        layout.addLayout(body_row)
 
         container = QtWidgets.QWidget()
         container.setLayout(layout)
@@ -219,11 +285,13 @@ class FMRPreview(QtWidgets.QMainWindow):
         # Commit parsed data, populate UI, and render
         self.columns = columns
         self.units = units
+        self.direction_data = []
+        self.prepare_sweep_direction_and_error()
+        self.current_file_path = path
+        self.set_phase(0.0, update=False)
         self.populate_axis_choices()  # fills combos and sets defaults
         self.update_plot()  # draw initial plot based on defaults
 
-        self.plot_widget.setTitle(os.path.basename(path))
-        self.file_label.setText(path)
         self.last_viewed_dir = os.path.dirname(path)
 
     def populate_axis_choices(self):
@@ -314,10 +382,32 @@ class FMRPreview(QtWidgets.QMainWindow):
             self.derivative_checkbox.setChecked(False)
         self.update_plot()
 
+    def on_phase_dial_changed(self, value: int):
+        """Sync dial changes to spinbox and update plot."""
+        if self._suppress_phase:
+            return
+        self.set_phase(float(value), source="dial")
+
+    def on_phase_spin_changed(self, value: float):
+        """Sync spinbox changes to dial and update plot."""
+        if self._suppress_phase:
+            return
+        self.set_phase(float(value), source="spin")
+
+    def on_guess_phase(self):
+        """Guess phase angle and apply it."""
+        guess = self.suggest_phase_angle()
+        self.set_phase(guess)
+
+    def on_reset_phase(self):
+        """Reset phase angle to zero."""
+        self.set_phase(0.0)
+
     def update_plot(self):
         """Render the current column selections onto the plot widget."""
         if not self.columns:
             return
+        self._rotated_xy = None  # clear rotation cache for this draw
         x_label = self.x_combo.currentText()
         y_label = self.y_combo.currentText()
         x_col = self.display_to_column.get(x_label)
@@ -325,8 +415,8 @@ class FMRPreview(QtWidgets.QMainWindow):
         if not x_col or not y_col:
             return
 
-        x_values = self.columns.get(x_col, [])
-        y_values = self.columns.get(y_col, [])
+        x_values = self.get_plot_values(x_col)
+        y_values = self.get_plot_values(y_col)
         if not x_values or not y_values:
             return
 
@@ -338,7 +428,7 @@ class FMRPreview(QtWidgets.QMainWindow):
             x_values,
             y_values,
             pen=pen,
-            symbol="o",
+            symbol=None,
             symbolSize=4,
             symbolBrush=(60, 60, 200),
         )
@@ -378,6 +468,8 @@ class FMRPreview(QtWidgets.QMainWindow):
             )
         else:
             self.plot_widget.getPlotItem().getAxis("right").setLabel("")
+
+        self.update_titles()
 
     def _clear_secondary_curve(self):
         """Remove the previous derivative/integral plot, if any."""
@@ -446,6 +538,168 @@ class FMRPreview(QtWidgets.QMainWindow):
         # Mirror geometry so the secondary axis aligns with primary X range
         self.secondary_vb.setGeometry(plot_item.vb.sceneBoundingRect())
         self.secondary_vb.linkedViewChanged(plot_item.vb, self.secondary_vb.XAxis)
+
+    def get_plot_values(self, column_name: str):
+        """Return column values, applying sweep/phase corrections as needed."""
+        values = self.columns.get(column_name, [])
+        lower = column_name.lower()
+
+        if lower in {"x", "y"} and self.columns:
+            rot_x, rot_y = self.get_rotated_xy()
+            if rot_x is not None and rot_y is not None:
+                values = rot_x if lower == "x" else rot_y
+        elif lower == "field" and values:
+            if self.direction_data and len(self.direction_data) == len(values):
+                shift = self.sweep_error_spin.value()
+                values = [val - dir_flag * shift for val, dir_flag in zip(values, self.direction_data)]
+        return values
+
+    def prepare_sweep_direction_and_error(self):
+        """Compute sweep direction (+/-1) and suggested sweep error from Field vs Time."""
+        field_key = next((key for key in self.columns if key.lower() == "field"), None)
+        time_key = next((key for key in self.columns if key.lower() == "time"), None)
+        if not field_key or not time_key:
+            self.direction_data = []
+            self.sweep_error_spin.setValue(0.0)
+            return
+        field_vals = self.columns[field_key]
+        time_vals = self.columns[time_key]
+        if len(field_vals) != len(time_vals) or len(field_vals) < 2:
+            self.direction_data = []
+            self.sweep_error_spin.setValue(0.0)
+            return
+
+        raw_derivative = self.compute_derivative(time_vals, field_vals)
+        smoothed_derivative = self._moving_average(raw_derivative, window=5)
+
+        # Build direction flags, forcing early points to +1
+        direction = []
+        for idx, deriv in enumerate(smoothed_derivative):
+            if idx < IGNORE_DIRECTION_POINTS:
+                direction.append(1)
+                continue
+            if not math.isfinite(deriv):
+                direction.append(1)
+            else:
+                direction.append(1 if deriv >= 0 else -1)
+
+        # Suggest sweep error from stable region near 25% of data
+        sample_idx = min(max(int(len(smoothed_derivative) * 0.25), IGNORE_DIRECTION_POINTS), len(smoothed_derivative) - 1)
+        sample_deriv = smoothed_derivative[sample_idx] if smoothed_derivative else 0.0
+        if not math.isfinite(sample_deriv):
+            sample_deriv = 0.0
+        suggested_error = sample_deriv * SWEEP_ERROR_COEFFICIENT
+
+        self.direction_data = direction
+        self.columns["Direction"] = direction
+        self.units["Direction"] = ""
+        self.sweep_error_spin.blockSignals(True)
+        self.sweep_error_spin.setValue(suggested_error)
+        self.sweep_error_spin.blockSignals(False)
+
+    @staticmethod
+    def _moving_average(values, window: int):
+        """Simple centered moving average smoothing."""
+        if window <= 1 or not values:
+            return list(values)
+        half = window // 2
+        smoothed = []
+        for idx in range(len(values)):
+            start = max(0, idx - half)
+            end = min(len(values), idx + half + 1)
+            segment = [v for v in values[start:end] if math.isfinite(v)]
+            smoothed.append(sum(segment) / len(segment) if segment else 0.0)
+        return smoothed
+
+    def get_rotated_xy(self):
+        """Return rotated X and Y using current phase angle."""
+        if self._rotated_xy is not None:
+            return self._rotated_xy
+        x_key = next((key for key in self.columns if key.lower() == "x"), None)
+        y_key = next((key for key in self.columns if key.lower() == "y"), None)
+        if not x_key or not y_key:
+            self._rotated_xy = (None, None)
+            return self._rotated_xy
+        x_vals = self.columns.get(x_key, [])
+        y_vals = self.columns.get(y_key, [])
+        length = min(len(x_vals), len(y_vals))
+        if length == 0:
+            self._rotated_xy = (None, None)
+            return self._rotated_xy
+        angle_rad = math.radians(self.current_phase_deg)
+        cos_a = math.cos(angle_rad)
+        sin_a = math.sin(angle_rad)
+        rot_x = []
+        rot_y = []
+        for xv, yv in zip(x_vals[:length], y_vals[:length]):
+            if not (math.isfinite(xv) and math.isfinite(yv)):
+                rot_x.append(float("nan"))
+                rot_y.append(float("nan"))
+                continue
+            rot_x.append(xv * cos_a - yv * sin_a)
+            rot_y.append(xv * sin_a + yv * cos_a)
+        self._rotated_xy = (rot_x, rot_y)
+        return self._rotated_xy
+
+    def suggest_phase_angle(self):
+        """Estimate phase to minimize Y variance for Field >= cutoff."""
+        x_key = next((key for key in self.columns if key.lower() == "x"), None)
+        y_key = next((key for key in self.columns if key.lower() == "y"), None)
+        field_key = next((key for key in self.columns if key.lower() == "field"), None)
+        if not x_key or not y_key or not field_key:
+            return 0.0
+        x_vals = self.columns.get(x_key, [])
+        y_vals = self.columns.get(y_key, [])
+        field_vals = self.columns.get(field_key, [])
+        length = min(len(x_vals), len(y_vals), len(field_vals))
+        if length == 0:
+            return 0.0
+
+        pairs = [
+            (x_vals[i], y_vals[i])
+            for i in range(length)
+            if math.isfinite(field_vals[i]) and field_vals[i] >= PHASE_CUTOFF_FIELD
+        ]
+        if not pairs:
+            pairs = [(x_vals[i], y_vals[i]) for i in range(length)]
+        if not pairs:
+            return 0.0
+
+        sxx = syy = sxy = 0.0
+        for xv, yv in pairs:
+            if not (math.isfinite(xv) and math.isfinite(yv)):
+                continue
+            sxx += xv * xv
+            syy += yv * yv
+            sxy += xv * yv
+        if sxx == 0 and syy == 0:
+            return 0.0
+        # Choose angle that maximizes X variance (thus minimizing Y variance)
+        angle_rad = 0.5 * math.atan2(2 * sxy, sxx - syy)
+        return math.degrees(angle_rad)
+
+    def set_phase(self, angle_deg: float, source: str = None, update: bool = True):
+        """Set current phase, keep controls in sync, optionally refresh plot."""
+        clamped = max(min(angle_deg, 180.0), -180.0)
+        self.current_phase_deg = clamped
+        self._rotated_xy = None
+        self._suppress_phase = True
+        if source != "dial":
+            self.phase_dial.setValue(int(round(clamped)))
+        if source != "spin":
+            self.phase_spin.setValue(clamped)
+        self._suppress_phase = False
+        if update:
+            self.update_plot()
+
+    def update_titles(self):
+        """Update plot title and file display with current phase."""
+        base = os.path.basename(self.current_file_path) if self.current_file_path else "No file loaded"
+        phase_text = f"(phase {self.current_phase_deg:.2f}°)"
+        display_path = self.current_file_path or "No file loaded"
+        self.file_path_edit.setText(f"{display_path} {phase_text}")
+        self.plot_widget.setTitle(base)
+        self.setWindowTitle("FMR CSV Preview")
 
 
 def main():
