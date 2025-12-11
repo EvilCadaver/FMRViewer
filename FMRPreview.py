@@ -146,6 +146,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.phase_dial = QtWidgets.QDial()
         self.phase_dial.setRange(-180, 180)
         self.phase_dial.setNotchesVisible(True)
+        self.phase_dial.setMinimumSize(150, 150)  # make the wheel visibly larger
         self.phase_dial.valueChanged.connect(self.on_phase_dial_changed)
 
         self.phase_plus_button = QtWidgets.QPushButton("+90°")
@@ -170,15 +171,12 @@ class FMRPreview(QtWidgets.QMainWindow):
         phase_spin_row.addWidget(self.phase_spin)
         phase_spin_row.addWidget(self.guess_phase_button)
         phase_spin_row.addWidget(self.reset_phase_button)
-        # phase_spin_row.addStretch()
-
+        
         dial_buttons_col = QtWidgets.QVBoxLayout()
-        # dial_buttons_col.addStretch()
         dial_buttons_col.addWidget(self.phase_plus_button)
         dial_buttons_col.addSpacing(6)
         dial_buttons_col.addWidget(self.phase_minus_button)
-        # dial_buttons_col.addStretch()
-
+        
         phase_dial_row = QtWidgets.QHBoxLayout()
         phase_dial_row.addWidget(self.phase_dial)
         phase_dial_row.addSpacing(6)
