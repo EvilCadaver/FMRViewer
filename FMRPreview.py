@@ -110,6 +110,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.file_label = QtWidgets.QLabel("No file loaded")
         self.open_button = QtWidgets.QPushButton("Open CSV...")
         self.open_button.clicked.connect(self.choose_file)
+        self.last_viewed_dir = None  # remember last folder visited during this session
 
         # Axis selectors. Each combo shows column names (with units when available).
         self.x_combo = QtWidgets.QComboBox()
@@ -156,7 +157,11 @@ class FMRPreview(QtWidgets.QMainWindow):
 
     def choose_file(self):
         """Open a file dialog and load the chosen CSV."""
-        start_dir = self.data_dir if os.path.isdir(self.data_dir) else os.getcwd()
+        start_dir = (
+            self.last_viewed_dir
+            or self.find_latest_data_folder()
+            or (self.data_dir if os.path.isdir(self.data_dir) else os.getcwd())
+        )
         # Let the user pick a CSV; remember start directory preference
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
@@ -167,12 +172,37 @@ class FMRPreview(QtWidgets.QMainWindow):
         if path:
             self.load_and_plot(path)
 
+    def find_latest_data_folder(self):
+        """Return newest YYYYMMDD subfolder inside Data/, or None if absent."""
+        if not os.path.isdir(self.data_dir):
+            return None
+        dated_dirs = [
+            entry.path
+            for entry in os.scandir(self.data_dir)
+            if entry.is_dir() and entry.name.isdigit() and len(entry.name) == 8
+        ]
+        if not dated_dirs:
+            return None
+        # Names are YYYYMMDD so lexical sort matches chronological order
+        return sorted(dated_dirs, reverse=True)[0]
+
+    @staticmethod
+    def find_newest_csv(directory: str):
+        """Return newest .csv file in directory (by mtime), or None if missing."""
+        if not directory or not os.path.isdir(directory):
+            return None
+        csv_files = [path for path in glob.glob(os.path.join(directory, "*.csv")) if os.path.isfile(path)]
+        if not csv_files:
+            return None
+        return max(csv_files, key=os.path.getmtime)
+
     def load_first_csv_if_present(self):
-        """Auto-load the first CSV in Data/ so the window is immediately useful."""
-        pattern = os.path.join(self.data_dir, "*.csv")
-        csv_files = sorted(glob.glob(pattern))
-        if csv_files:
-            self.load_and_plot(csv_files[0])
+        """Auto-load newest CSV from newest dated folder to show data immediately."""
+        latest_folder = self.find_latest_data_folder()
+        search_dir = latest_folder or (self.data_dir if os.path.isdir(self.data_dir) else None)
+        newest_csv = self.find_newest_csv(search_dir) if search_dir else None
+        if newest_csv:
+            self.load_and_plot(newest_csv)
 
     def load_and_plot(self, path: str):
         """Parse a file, populate selectors, and render the plot."""
@@ -194,6 +224,7 @@ class FMRPreview(QtWidgets.QMainWindow):
 
         self.plot_widget.setTitle(os.path.basename(path))
         self.file_label.setText(path)
+        self.last_viewed_dir = os.path.dirname(path)
 
     def populate_axis_choices(self):
         """Fill the X/Y combos with available columns and pick sensible defaults."""
@@ -420,7 +451,7 @@ class FMRPreview(QtWidgets.QMainWindow):
 def main():
     app = QtWidgets.QApplication(sys.argv)
     window = FMRPreview()
-    window.resize(900, 600)
+    window.resize(1920, 1200)
     window.show()
     sys.exit(app.exec_())
 
