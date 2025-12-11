@@ -1,10 +1,12 @@
 ﻿import csv
 import glob
+import math
 import os
 import sys
-from PyQt5 import QtWidgets
+from PyQt5 import QtCore, QtWidgets
 import pyqtgraph as pg
 
+# Lightweight CSV plotting helper with optional derivative/integral overlay
 
 DATA_DIR_NAME = "Data"
 
@@ -21,10 +23,10 @@ def parse_numeric_columns(csv_path: str):
         units[name]   -> unit string (or empty if missing)
     """
     with open(csv_path, newline="") as handle:
-        # Remove blank lines so the CSV reader only sees meaningful rows
+        # Strip out empty lines so the CSV reader only sees meaningful rows
         lines = [line.strip() for line in handle if line.strip()]
 
-    # Pick a header row. Prefer a row containing "field" to match the provided data,
+    # Pick a header row. Prefer a row containing "field" to match typical data,
     # otherwise fall back to the first comma-separated row.
     header_index = next(
         (idx for idx, line in enumerate(lines) if "," in line and "field" in line.lower()),
@@ -56,7 +58,7 @@ def parse_numeric_columns(csv_path: str):
         for idx, name in enumerate(header)
     }
 
-    # Parse numeric rows; any row that fails float conversion is skipped
+    # Parse numeric rows; skip any row that fails float conversion
     for row in data_rows:
         if len(row) < len(header):
             continue
@@ -77,6 +79,7 @@ class FMRPreview(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("FMR CSV Preview")
+        # Default data directory lives alongside the script in Data/
         self.data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), DATA_DIR_NAME)
 
         # In-memory state for the loaded CSV
@@ -86,12 +89,22 @@ class FMRPreview(QtWidgets.QMainWindow):
         self._suppress_combo = False  # guard to prevent signal loops while we adjust combos
         self._last_x_display = ""  # previous X selection (for swap logic)
         self._last_y_display = ""  # previous Y selection (for swap logic)
+        self._secondary_curve = None  # plot item for derivative/integral overlay
 
         # PyQtGraph plot surface
         self.plot_widget = pg.PlotWidget(background="w")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.setLabel("left", "X (V)")
         self.plot_widget.setLabel("bottom", "Field (Oe)")
+        # Attach a secondary ViewBox for the right-side axis
+        plot_item = self.plot_widget.getPlotItem()
+        plot_item.showAxis("right")
+        self.secondary_vb = pg.ViewBox()
+        plot_item.scene().addItem(self.secondary_vb)
+        plot_item.getAxis("right").linkToView(self.secondary_vb)
+        self.secondary_vb.setXLink(plot_item.vb)
+        plot_item.vb.sigResized.connect(self.update_secondary_view_bounds)
+        self.update_secondary_view_bounds()
 
         # File label + button to pick a CSV
         self.file_label = QtWidgets.QLabel("No file loaded")
@@ -112,6 +125,18 @@ class FMRPreview(QtWidgets.QMainWindow):
         axes_row.addWidget(self.y_combo)
         axes_row.addStretch()
 
+        # Secondary calculations (derivative/integral) controls
+        self.derivative_checkbox = QtWidgets.QCheckBox("Show derivative (dY/dX)")
+        self.integral_checkbox = QtWidgets.QCheckBox("Show integral (Y*dX)")
+        self.derivative_checkbox.stateChanged.connect(self.on_derivative_toggled)
+        self.integral_checkbox.stateChanged.connect(self.on_integral_toggled)
+
+        options_row = QtWidgets.QHBoxLayout()
+        options_row.addWidget(self.derivative_checkbox)
+        options_row.addSpacing(12)
+        options_row.addWidget(self.integral_checkbox)
+        options_row.addStretch()
+
         top_row = QtWidgets.QHBoxLayout()
         top_row.addWidget(self.file_label)
         top_row.addStretch()
@@ -120,6 +145,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout()
         layout.addLayout(top_row)
         layout.addLayout(axes_row)
+        layout.addLayout(options_row)
         layout.addWidget(self.plot_widget)
 
         container = QtWidgets.QWidget()
@@ -131,6 +157,7 @@ class FMRPreview(QtWidgets.QMainWindow):
     def choose_file(self):
         """Open a file dialog and load the chosen CSV."""
         start_dir = self.data_dir if os.path.isdir(self.data_dir) else os.getcwd()
+        # Let the user pick a CSV; remember start directory preference
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             "Select CSV file",
@@ -159,6 +186,7 @@ class FMRPreview(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.information(self, "No data", "No numeric columns found.")
             return
 
+        # Commit parsed data, populate UI, and render
         self.columns = columns
         self.units = units
         self.populate_axis_choices()  # fills combos and sets defaults
@@ -174,6 +202,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.y_combo.clear()
 
         def display_label(name: str) -> str:
+            # Compose "Name (unit)" when a unit exists
             unit = self.units.get(name, "")
             return f"{name} ({unit})" if unit else name
 
@@ -211,6 +240,8 @@ class FMRPreview(QtWidgets.QMainWindow):
         self._last_x_display = self.x_combo.currentText()
         self._last_y_display = self.y_combo.currentText()
         self._suppress_combo = False
+        self.derivative_checkbox.setChecked(False)
+        self.integral_checkbox.setChecked(False)
 
     def on_x_changed(self, new_display: str):
         """Handle X combo changes, swapping axes if the selection collides with Y."""
@@ -235,9 +266,21 @@ class FMRPreview(QtWidgets.QMainWindow):
             # Keep axes distinct by swapping when the same item is chosen
             self._suppress_combo = True
             self.x_combo.setCurrentText(self._last_y_display)
-            self._suppress_combo = False
+        self._suppress_combo = False
         self._last_x_display = self.x_combo.currentText()
         self._last_y_display = self.y_combo.currentText()
+        self.update_plot()
+
+    def on_derivative_toggled(self, state: int):
+        """Toggle derivative view; only one secondary series is shown at a time."""
+        if state:
+            self.integral_checkbox.setChecked(False)
+        self.update_plot()
+
+    def on_integral_toggled(self, state: int):
+        """Toggle integral view; only one secondary series is shown at a time."""
+        if state:
+            self.derivative_checkbox.setChecked(False)
         self.update_plot()
 
     def update_plot(self):
@@ -256,7 +299,9 @@ class FMRPreview(QtWidgets.QMainWindow):
         if not x_values or not y_values:
             return
 
+        # Draw primary series on the left axis
         self.plot_widget.clear()
+        self._clear_secondary_curve()
         pen = pg.mkPen(color=(200, 50, 50), width=2)
         self.plot_widget.plot(
             x_values,
@@ -273,6 +318,103 @@ class FMRPreview(QtWidgets.QMainWindow):
 
         self.plot_widget.setLabel("bottom", axis_label(x_col))
         self.plot_widget.setLabel("left", axis_label(y_col))
+
+        # Build secondary series (derivative or integral) if requested
+        secondary_values = []
+        secondary_label = ""
+        secondary_unit = ""
+        if self.derivative_checkbox.isChecked():
+            secondary_values = self.compute_derivative(x_values, y_values)
+            secondary_label = f"d{y_col}/d{x_col}"
+            secondary_unit = self.format_derivative_unit(
+                self.units.get(y_col, ""), self.units.get(x_col, "")
+            )
+        elif self.integral_checkbox.isChecked():
+            secondary_values = self.compute_integral(x_values, y_values)
+            secondary_label = f"Integral of {y_col} d{x_col}"
+            secondary_unit = self.format_integral_unit(
+                self.units.get(y_col, ""), self.units.get(x_col, "")
+            )
+
+        if secondary_values and any(math.isfinite(val) for val in secondary_values):
+            secondary_pen = pg.mkPen(color=(50, 100, 200), width=2, style=QtCore.Qt.DashLine)
+            self._secondary_curve = pg.PlotDataItem(
+                x_values, secondary_values, pen=secondary_pen, name="secondary"
+            )
+            self.secondary_vb.addItem(self._secondary_curve)
+            self.plot_widget.getPlotItem().getAxis("right").setLabel(
+                secondary_label, units=secondary_unit
+            )
+        else:
+            self.plot_widget.getPlotItem().getAxis("right").setLabel("")
+
+    def _clear_secondary_curve(self):
+        """Remove the previous derivative/integral plot, if any."""
+        if self._secondary_curve is not None:
+            self.secondary_vb.removeItem(self._secondary_curve)
+            self._secondary_curve = None
+            self.plot_widget.getPlotItem().getAxis("right").setLabel("")
+
+    @staticmethod
+    def compute_derivative(x_values, y_values):
+        """Central difference derivative, falling back to forward/backward edges."""
+        if len(x_values) < 2:
+            return []
+        derivative = []
+        for idx in range(len(x_values)):
+            if idx == 0:
+                # Forward difference at the start
+                dx = x_values[1] - x_values[0]
+                dy = y_values[1] - y_values[0]
+            elif idx == len(x_values) - 1:
+                # Backward difference at the end
+                dx = x_values[-1] - x_values[-2]
+                dy = y_values[-1] - y_values[-2]
+            else:
+                # Central difference in the interior
+                dx = x_values[idx + 1] - x_values[idx - 1]
+                dy = y_values[idx + 1] - y_values[idx - 1]
+            derivative.append(dy / dx if dx != 0 else float("nan"))
+        return derivative
+
+    @staticmethod
+    def compute_integral(x_values, y_values):
+        """Cumulative trapezoidal integral of y with respect to x."""
+        if len(x_values) < 2:
+            return []
+        area = [0.0]
+        for idx in range(1, len(x_values)):
+            dx = x_values[idx] - x_values[idx - 1]
+            # Trapezoid area between successive points
+            area.append(area[-1] + 0.5 * (y_values[idx] + y_values[idx - 1]) * dx)
+        return area
+
+    @staticmethod
+    def format_derivative_unit(y_unit: str, x_unit: str) -> str:
+        if y_unit and x_unit:
+            return f"{y_unit}/{x_unit}"
+        if y_unit:
+            return f"{y_unit}/x"
+        if x_unit:
+            return f"1/{x_unit}"
+        return ""
+
+    @staticmethod
+    def format_integral_unit(y_unit: str, x_unit: str) -> str:
+        if y_unit and x_unit:
+            return f"{y_unit}*{x_unit}"
+        if y_unit:
+            return f"{y_unit}*x"
+        if x_unit:
+            return x_unit
+        return ""
+
+    def update_secondary_view_bounds(self):
+        """Keep the secondary view box in sync with the primary plot area."""
+        plot_item = self.plot_widget.getPlotItem()
+        # Mirror geometry so the secondary axis aligns with primary X range
+        self.secondary_vb.setGeometry(plot_item.vb.sceneBoundingRect())
+        self.secondary_vb.linkedViewChanged(plot_item.vb, self.secondary_vb.XAxis)
 
 
 def main():
