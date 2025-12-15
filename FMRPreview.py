@@ -3,7 +3,8 @@ import glob
 import math
 import os
 import sys
-from PyQt5 import QtCore, QtWidgets
+from functools import partial
+from PyQt5 import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
 import numpy as np
 
@@ -13,6 +14,19 @@ DATA_DIR_NAME = "Data"
 SWEEP_ERROR_COEFFICIENT = 0.38
 IGNORE_DIRECTION_POINTS = 10  # points at start assumed positive sweep
 PHASE_CUTOFF_FIELD = 500  # Oe to estimate initial phase
+MAX_FILES = 10
+DEFAULT_COLORS = [
+    (200, 50, 50),
+    (50, 100, 200),
+    (50, 160, 120),
+    (200, 140, 50),
+    (120, 60, 200),
+    (0, 150, 180),
+    (180, 90, 90),
+    (90, 180, 90),
+    (180, 180, 60),
+    (90, 90, 180),
+]
 
 
 def parse_numeric_columns(csv_path: str):
@@ -90,6 +104,21 @@ def parse_numeric_columns(csv_path: str):
     return columns, units, header_text
 
 
+class PlotSession:
+    """Container for a loaded CSV and its plot settings."""
+
+    def __init__(self, path: str, columns: dict, units: dict, header_text: str, direction_data: list):
+        self.path = path
+        self.columns = columns
+        self.units = units
+        self.header_text = header_text
+        self.direction_data = direction_data
+        self.color = None
+        self.weight = 2
+        self.scale = 1.0
+        self.rotated_xy = None  # cached rotated X/Y for current phase
+
+
 class FMRPreview(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -97,19 +126,16 @@ class FMRPreview(QtWidgets.QMainWindow):
         # Default data directory lives alongside the script in Data/
         self.data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), DATA_DIR_NAME)
 
-        # In-memory state for the loaded CSV
-        self.columns = {}  # column name -> list[float]
-        self.units = {}  # column name -> unit string
+        # In-memory state for loaded CSVs
+        self.sessions = []  # list[PlotSession]
         self.display_to_column = {}  # "Field (Oe)" -> "Field"
         self._suppress_combo = False  # guard to prevent signal loops while we adjust combos
         self._last_x_display = ""  # previous X selection (for swap logic)
         self._last_y_display = ""  # previous Y selection (for swap logic)
-        self._secondary_curve = None  # plot item for derivative/integral overlay
-        self.direction_data = []  # derived +1/-1 sweep direction
+        self._secondary_curves = []  # plot items for derivative/integral overlay
         self.current_phase_deg = 0.0
         self._suppress_phase = False
         self.current_file_path = ""
-        self._rotated_xy = None
 
         # PyQtGraph plot surface
         self.plot_widget = pg.PlotWidget(background="w")
@@ -226,9 +252,20 @@ class FMRPreview(QtWidgets.QMainWindow):
         top_row.addWidget(self.open_button)
 
         header_layout = QtWidgets.QVBoxLayout()
+        header_layout.addWidget(QtWidgets.QLabel("File header:"))
         header_layout.addWidget(self.header_display)
 
+        self.files_list_layout = QtWidgets.QVBoxLayout()
+        self.files_list_layout.setContentsMargins(0, 0, 0, 0)
+        self.files_list_layout.setSpacing(4)
+        self.files_list_layout.addStretch()
+        files_column = QtWidgets.QVBoxLayout()
+        files_column.addWidget(QtWidgets.QLabel("Loaded files (max 10):"))
+        files_column.addLayout(self.files_list_layout, 1)
+        files_column.addStretch()
+
         left_col = QtWidgets.QVBoxLayout()
+        left_col.addLayout(header_layout)
         left_col.addLayout(axes_row)
         left_col.addLayout(options_row)
         left_col.addLayout(sweep_row)
@@ -243,6 +280,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         controls_row.addStretch()
 
         body_row = QtWidgets.QHBoxLayout()
+        body_row.addLayout(files_column)
         body_row.addWidget(self.plot_widget, 1)
         body_row.addLayout(controls_row)
 
@@ -257,21 +295,20 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.load_first_csv_if_present()
 
     def choose_file(self):
-        """Open a file dialog and load the chosen CSV."""
+        """Open a file dialog and load one or more CSVs."""
         start_dir = (
             self.last_viewed_dir
             or self.find_latest_data_folder()
             or (self.data_dir if os.path.isdir(self.data_dir) else os.getcwd())
         )
-        # Let the user pick a CSV; remember start directory preference
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self,
-            "Select CSV file",
+            "Select CSV files",
             start_dir,
             "CSV files (*.csv);;All files (*.*)",
         )
-        if path:
-            self.load_and_plot(path)
+        if paths:
+            self.add_sessions_from_paths(paths)
 
     def find_latest_data_folder(self):
         """Return newest YYYYMMDD subfolder inside Data/, or None if absent."""
@@ -303,47 +340,224 @@ class FMRPreview(QtWidgets.QMainWindow):
         search_dir = latest_folder or (self.data_dir if os.path.isdir(self.data_dir) else None)
         newest_csv = self.find_newest_csv(search_dir) if search_dir else None
         if newest_csv:
-            self.load_and_plot(newest_csv)
+            self.add_sessions_from_paths([newest_csv])
 
-    def load_and_plot(self, path: str):
-        """Parse a file, populate selectors, and render the plot."""
+    def add_sessions_from_paths(self, paths):
+        """Load one or more files into sessions, obeying the max limit."""
+        if not paths:
+            return
+        existing_paths = {session.path for session in self.sessions}
+        added = 0
+        for path in paths:
+            if len(self.sessions) >= MAX_FILES:
+                QtWidgets.QMessageBox.information(
+                    self, "Limit reached", f"Maximum of {MAX_FILES} files. Skipping extras."
+                )
+                break
+            if not path or not os.path.isfile(path):
+                continue
+            if path in existing_paths:
+                continue  # already loaded
+            session = self.build_session(path)
+            if session is None:
+                continue
+            if session.color is None:
+                color_idx = len(self.sessions) % len(DEFAULT_COLORS)
+                session.color = DEFAULT_COLORS[color_idx]
+            self.sessions.append(session)
+            added += 1
+            existing_paths.add(path)
+            self.current_file_path = path
+            self.last_viewed_dir = os.path.dirname(path)
+            self.header_display.setPlainText(session.header_text or "Header not found.")
+            # Only set suggested sweep error for the very first session
+            if len(self.sessions) == 1:
+                suggested = getattr(session, "suggested_error", 0.0)
+                self.sweep_error_spin.blockSignals(True)
+                self.sweep_error_spin.setValue(suggested)
+                self.sweep_error_spin.blockSignals(False)
+
+        if added:
+            self.populate_axis_choices()
+            self.update_file_list_ui()
+            self.update_plot()
+
+    def build_session(self, path: str):
+        """Parse a file and create a PlotSession instance."""
         try:
             columns, units, header_text = parse_numeric_columns(path)
         except Exception as exc:  # noqa: BLE001
-            QtWidgets.QMessageBox.warning(self, "Load error", str(exc))
-            return
-
-        self.header_display.setPlainText(header_text or "Header not found.")
+            QtWidgets.QMessageBox.warning(self, "Load error", f"{path}:\n{exc}")
+            return None
         if not columns:
-            QtWidgets.QMessageBox.information(self, "No data", "No numeric columns found.")
+            QtWidgets.QMessageBox.information(self, "No data", f"No numeric columns found in {path}.")
+            return None
+        direction_data, suggested_error = self.compute_direction_and_error(columns)
+        # Attach direction column for plotting convenience
+        if direction_data:
+            columns = dict(columns)
+            units = dict(units)
+            columns["Direction"] = direction_data
+            units["Direction"] = ""
+
+        session = PlotSession(path, columns, units, header_text, direction_data)
+        session.suggested_error = suggested_error
+        return session
+
+    def update_file_list_ui(self):
+        """Refresh the vertical list of loaded files and their controls."""
+        while self.files_list_layout.count():
+            item = self.files_list_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        for idx, session in enumerate(self.sessions):
+            row_widget = QtWidgets.QWidget()
+            row_layout = QtWidgets.QHBoxLayout()
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(6)
+            row_widget.setLayout(row_layout)
+
+            color_label = QtWidgets.QLabel()
+            color_label.setFixedSize(14, 14)
+            color = session.color or DEFAULT_COLORS[idx % len(DEFAULT_COLORS)]
+            color_label.setStyleSheet(f"background-color: rgb{color}; border: 1px solid #444;")
+
+            name_label = QtWidgets.QLabel(os.path.basename(session.path))
+            name_label.setToolTip(session.path)
+            name_label.mousePressEvent = partial(self.on_session_selected, session=session)
+
+            adjust_btn = QtWidgets.QPushButton("Adjust…")
+            adjust_btn.setMaximumWidth(80)
+            adjust_btn.clicked.connect(partial(self.open_adjust_dialog, idx))
+
+            scale_label = QtWidgets.QLabel(f"x{session.scale:g}")
+            scale_label.setMinimumWidth(50)
+
+            remove_btn = QtWidgets.QPushButton("X")
+            remove_btn.setMaximumWidth(30)
+            remove_btn.clicked.connect(partial(self.remove_session, idx))
+
+            row_layout.addWidget(color_label)
+            row_layout.addWidget(name_label, 1)
+            row_layout.addWidget(adjust_btn)
+            row_layout.addWidget(scale_label)
+            row_layout.addWidget(remove_btn)
+
+            self.files_list_layout.addWidget(row_widget)
+        self.files_list_layout.addStretch()
+
+    def remove_session(self, index: int):
+        if index < 0 or index >= len(self.sessions):
             return
+        del self.sessions[index]
+        if self.sessions:
+            self.current_file_path = self.sessions[-1].path
+            self.header_display.setPlainText(self.sessions[-1].header_text or "Header not found.")
+        else:
+            self.current_file_path = ""
+            self.header_display.setPlainText("Header will show after loading a file.")
+        self.populate_axis_choices()
+        self.update_file_list_ui()
+        self.update_plot()
 
-        # Commit parsed data, populate UI, and render
-        self.columns = columns
-        self.units = units
-        self.direction_data = []
-        self.prepare_sweep_direction_and_error()
-        self.current_file_path = path
-        self.set_phase(0.0, update=False)
-        self.populate_axis_choices()  # fills combos and sets defaults
-        self.update_plot()  # draw initial plot based on defaults
+    def open_adjust_dialog(self, index: int):
+        """Dialog to tweak color, weight, and scale for a session."""
+        if index < 0 or index >= len(self.sessions):
+            return
+        session = self.sessions[index]
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle(f"Adjust plot: {os.path.basename(session.path)}")
+        layout = QtWidgets.QFormLayout(dialog)
 
-        self.last_viewed_dir = os.path.dirname(path)
+        color_value = session.color or DEFAULT_COLORS[index % len(DEFAULT_COLORS)]
+        color_preview = QtWidgets.QLabel()
+        color_preview.setFixedSize(60, 18)
+        color_preview.setStyleSheet(f"background-color: rgb{color_value}; border: 1px solid #444;")
+
+        def pick_color():
+            nonlocal color_value
+            initial = QtGui.QColor(*color_value)
+            chosen = QtWidgets.QColorDialog.getColor(initial, self, "Choose line color")
+            if chosen.isValid():
+                color_value = (chosen.red(), chosen.green(), chosen.blue())
+                color_preview.setStyleSheet(
+                    f"background-color: rgb{color_value}; border: 1px solid #444;"
+                )
+
+        color_btn = QtWidgets.QPushButton("Pick color")
+        color_btn.clicked.connect(pick_color)
+        color_row = QtWidgets.QHBoxLayout()
+        color_row.addWidget(color_btn)
+        color_row.addWidget(color_preview)
+        color_row.addStretch()
+
+        weight_spin = QtWidgets.QSpinBox()
+        weight_spin.setRange(1, 10)
+        weight_spin.setValue(session.weight)
+
+        scale_spin = QtWidgets.QDoubleSpinBox()
+        scale_spin.setDecimals(4)
+        scale_spin.setRange(0.0001, 1e6)
+        scale_spin.setSingleStep(0.1)
+        scale_spin.setValue(session.scale)
+
+        layout.addRow("Color:", color_row)
+        layout.addRow("Line weight:", weight_spin)
+        layout.addRow("Scale (multiplier):", scale_spin)
+
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            session.color = color_value
+            session.weight = weight_spin.value()
+            session.scale = scale_spin.value()
+            self.update_file_list_ui()
+            self.update_plot()
+
+    def on_session_selected(self, event=None, session: PlotSession = None):
+        """Show header text for the clicked session name."""
+        if session is None:
+            return
+        self.current_file_path = session.path
+        self.header_display.setPlainText(session.header_text or "Header not found.")
+        self.update_titles()
 
     def populate_axis_choices(self):
         """Fill the X/Y combos with available columns and pick sensible defaults."""
+        if not self.sessions:
+            self.x_combo.clear()
+            self.y_combo.clear()
+            return
+
         self._suppress_combo = True
+        prev_x = self.x_combo.currentText()
+        prev_y = self.y_combo.currentText()
         self.x_combo.clear()
         self.y_combo.clear()
 
+        units_lookup = {}
+        ordered_columns = []
+        for session in self.sessions:
+            for name, unit in session.units.items():
+                if name not in units_lookup:
+                    units_lookup[name] = unit
+                    ordered_columns.append(name)
+            for name in session.columns.keys():
+                if name not in units_lookup:
+                    units_lookup[name] = ""
+                    ordered_columns.append(name)
+
         def display_label(name: str) -> str:
-            # Compose "Name (unit)" when a unit exists
-            unit = self.units.get(name, "")
+            unit = units_lookup.get(name, "")
             return f"{name} ({unit})" if unit else name
 
         self.display_to_column = {}
         display_names = []
-        for col in self.columns:
+        for col in ordered_columns:
             label = display_label(col)
             display_names.append(label)
             self.display_to_column[label] = col
@@ -352,12 +566,10 @@ class FMRPreview(QtWidgets.QMainWindow):
             self.x_combo.addItem(label)
             self.y_combo.addItem(label)
 
-        # Default X: prefer "Field" if present; otherwise first column
         default_x = next(
             (lbl for lbl in display_names if self.display_to_column[lbl].lower() == "field"),
             display_names[0],
         )
-        # Default Y: prefer "X" or "Y" (whichever is available and not the same as X)
         default_y = next(
             (
                 lbl
@@ -369,14 +581,12 @@ class FMRPreview(QtWidgets.QMainWindow):
         if default_y is None:
             default_y = display_names[1] if len(display_names) > 1 else display_names[0]
 
-        self.x_combo.setCurrentText(default_x)
-        self.y_combo.setCurrentText(default_y)
+        self.x_combo.setCurrentText(prev_x if prev_x in self.display_to_column else default_x)
+        self.y_combo.setCurrentText(prev_y if prev_y in self.display_to_column else default_y)
 
         self._last_x_display = self.x_combo.currentText()
         self._last_y_display = self.y_combo.currentText()
         self._suppress_combo = False
-        self.derivative_checkbox.setChecked(False)
-        self.integral_checkbox.setChecked(False)
 
     def on_x_changed(self, new_display: str):
         """Handle X combo changes, swapping axes if the selection collides with Y."""
@@ -449,9 +659,11 @@ class FMRPreview(QtWidgets.QMainWindow):
 
     def update_plot(self):
         """Render the current column selections onto the plot widget."""
-        if not self.columns:
+        if not self.sessions:
+            self.plot_widget.clear()
+            self._clear_secondary_curves()
+            self.plot_widget.getPlotItem().getAxis("right").setLabel("")
             return
-        self._rotated_xy = None  # clear rotation cache for this draw
         x_label = self.x_combo.currentText()
         y_label = self.y_combo.currentText()
         x_col = self.display_to_column.get(x_label)
@@ -459,68 +671,83 @@ class FMRPreview(QtWidgets.QMainWindow):
         if not x_col or not y_col:
             return
 
-        x_values = self.get_plot_values(x_col)
-        y_values = self.get_plot_values(y_col)
-        if not x_values or not y_values:
-            return
-
-        # Draw primary series on the left axis
         self.plot_widget.clear()
-        self._clear_secondary_curve()
-        pen = pg.mkPen(color=(200, 50, 50), width=2)
-        self.plot_widget.plot(
-            x_values,
-            y_values,
-            pen=pen,
-            symbol=None,
-            symbolSize=4,
-            symbolBrush=(60, 60, 200),
-        )
+        self._clear_secondary_curves()
+
+        def unit_for(name: str) -> str:
+            for session in self.sessions:
+                if name in session.units:
+                    return session.units.get(name, "")
+            return ""
 
         def axis_label(name: str) -> str:
-            unit = self.units.get(name, "")
+            unit = unit_for(name)
             return f"{name} ({unit})" if unit else name
 
         self.plot_widget.setLabel("bottom", axis_label(x_col))
         self.plot_widget.setLabel("left", axis_label(y_col))
 
-        # Build secondary series (derivative or integral) if requested
-        secondary_values = []
+        any_secondary = False
         secondary_label = ""
         secondary_unit = ""
-        if self.derivative_checkbox.isChecked():
-            secondary_values = self.compute_derivative(x_values, y_values)
-            secondary_label = f"d{y_col}/d{x_col}"
-            secondary_unit = self.format_derivative_unit(
-                self.units.get(y_col, ""), self.units.get(x_col, "")
-            )
-        elif self.integral_checkbox.isChecked():
-            secondary_values = self.compute_integral(x_values, y_values)
-            secondary_label = f"Integral of {y_col} d{x_col}"
-            secondary_unit = self.format_integral_unit(
-                self.units.get(y_col, ""), self.units.get(x_col, "")
+
+        for idx, session in enumerate(self.sessions):
+            x_values = self.get_plot_values(session, x_col)
+            y_values = self.get_plot_values(session, y_col)
+            if not x_values or not y_values:
+                continue
+            length = min(len(x_values), len(y_values))
+            if length == 0:
+                continue
+            x_values = x_values[:length]
+            y_values = y_values[:length]
+
+            scaled_y = [val * session.scale for val in y_values]
+            color = session.color or DEFAULT_COLORS[idx % len(DEFAULT_COLORS)]
+            pen = pg.mkPen(color=color, width=session.weight)
+            self.plot_widget.plot(
+                x_values,
+                scaled_y,
+                pen=pen,
+                symbol=None,
+                symbolSize=4,
             )
 
-        if secondary_values and any(math.isfinite(val) for val in secondary_values):
-            secondary_pen = pg.mkPen(color=(50, 100, 200), width=2, style=QtCore.Qt.DashLine)
-            self._secondary_curve = pg.PlotDataItem(
-                x_values, secondary_values, pen=secondary_pen, name="secondary"
-            )
-            self.secondary_vb.addItem(self._secondary_curve)
+            secondary_values = []
+            if self.derivative_checkbox.isChecked():
+                secondary_values = self.compute_derivative(x_values, scaled_y)
+                secondary_label = f"d{y_col}/d{x_col}"
+                secondary_unit = self.format_derivative_unit(unit_for(y_col), unit_for(x_col))
+            elif self.integral_checkbox.isChecked():
+                secondary_values = self.compute_integral(x_values, scaled_y)
+                secondary_label = f"Integral of {y_col} d{x_col}"
+                secondary_unit = self.format_integral_unit(unit_for(y_col), unit_for(x_col))
+            if secondary_values and any(math.isfinite(val) for val in secondary_values):
+                secondary_pen = pg.mkPen(color=color, width=max(1, session.weight - 1), style=QtCore.Qt.DashLine)
+                item = pg.PlotDataItem(
+                    x_values, secondary_values, pen=secondary_pen, name=f"secondary-{idx}"
+                )
+                self.secondary_vb.addItem(item)
+                self._secondary_curves.append(item)
+                any_secondary = True
+
+        if any_secondary:
             self.plot_widget.getPlotItem().getAxis("right").setLabel(
                 secondary_label, units=secondary_unit
             )
         else:
             self.plot_widget.getPlotItem().getAxis("right").setLabel("")
-
         self.update_titles()
 
-    def _clear_secondary_curve(self):
-        """Remove the previous derivative/integral plot, if any."""
-        if self._secondary_curve is not None:
-            self.secondary_vb.removeItem(self._secondary_curve)
-            self._secondary_curve = None
-            self.plot_widget.getPlotItem().getAxis("right").setLabel("")
+    def _clear_secondary_curves(self):
+        """Remove previous derivative/integral plots, if any."""
+        for item in self._secondary_curves:
+            try:
+                self.secondary_vb.removeItem(item)
+            except Exception:
+                pass
+        self._secondary_curves = []
+        self.plot_widget.getPlotItem().getAxis("right").setLabel("")
 
     @staticmethod
     def compute_derivative(x_values, y_values):
@@ -557,6 +784,41 @@ class FMRPreview(QtWidgets.QMainWindow):
         return area
 
     @staticmethod
+    def compute_direction_and_error(columns):
+        """Compute sweep direction (+/-1) and suggested sweep error from Field vs Time."""
+        field_key = next((key for key in columns if key.lower() == "field"), None)
+        time_key = next((key for key in columns if key.lower() == "time"), None)
+        if not field_key or not time_key:
+            return [], 0.0
+        field_vals = columns[field_key]
+        time_vals = columns[time_key]
+        if len(field_vals) != len(time_vals) or len(field_vals) < 2:
+            return [], 0.0
+
+        raw_derivative = FMRPreview.compute_derivative(time_vals, field_vals)
+        smoothed_derivative = FMRPreview._moving_average_static(raw_derivative, window=5)
+
+        direction = []
+        for idx, deriv in enumerate(smoothed_derivative):
+            if idx < IGNORE_DIRECTION_POINTS:
+                direction.append(1)
+                continue
+            if not math.isfinite(deriv):
+                direction.append(1)
+            else:
+                direction.append(1 if deriv >= 0 else -1)
+
+        sample_idx = min(
+            max(int(len(smoothed_derivative) * 0.25), IGNORE_DIRECTION_POINTS),
+            len(smoothed_derivative) - 1,
+        )
+        sample_deriv = smoothed_derivative[sample_idx] if smoothed_derivative else 0.0
+        if not math.isfinite(sample_deriv):
+            sample_deriv = 0.0
+        suggested_error = sample_deriv * SWEEP_ERROR_COEFFICIENT
+        return direction, suggested_error
+
+    @staticmethod
     def format_derivative_unit(y_unit: str, x_unit: str) -> str:
         if y_unit and x_unit:
             return f"{y_unit}/{x_unit}"
@@ -583,66 +845,23 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.secondary_vb.setGeometry(plot_item.vb.sceneBoundingRect())
         self.secondary_vb.linkedViewChanged(plot_item.vb, self.secondary_vb.XAxis)
 
-    def get_plot_values(self, column_name: str):
-        """Return column values, applying sweep/phase corrections as needed."""
-        values = self.columns.get(column_name, [])
+    def get_plot_values(self, session: PlotSession, column_name: str):
+        """Return column values for a session, applying sweep/phase corrections as needed."""
+        values = session.columns.get(column_name, [])
         lower = column_name.lower()
 
-        if lower in {"x", "y"} and self.columns:
-            rot_x, rot_y = self.get_rotated_xy()
+        if lower in {"x", "y"} and session.columns:
+            rot_x, rot_y = self.get_rotated_xy(session)
             if rot_x is not None and rot_y is not None:
                 values = rot_x if lower == "x" else rot_y
         elif lower == "field" and values:
-            if self.direction_data and len(self.direction_data) == len(values):
+            if session.direction_data and len(session.direction_data) == len(values):
                 shift = self.sweep_error_spin.value()
-                values = [val - dir_flag * shift for val, dir_flag in zip(values, self.direction_data)]
+                values = [val - dir_flag * shift for val, dir_flag in zip(values, session.direction_data)]
         return values
 
-    def prepare_sweep_direction_and_error(self):
-        """Compute sweep direction (+/-1) and suggested sweep error from Field vs Time."""
-        field_key = next((key for key in self.columns if key.lower() == "field"), None)
-        time_key = next((key for key in self.columns if key.lower() == "time"), None)
-        if not field_key or not time_key:
-            self.direction_data = []
-            self.sweep_error_spin.setValue(0.0)
-            return
-        field_vals = self.columns[field_key]
-        time_vals = self.columns[time_key]
-        if len(field_vals) != len(time_vals) or len(field_vals) < 2:
-            self.direction_data = []
-            self.sweep_error_spin.setValue(0.0)
-            return
-
-        raw_derivative = self.compute_derivative(time_vals, field_vals)
-        smoothed_derivative = self._moving_average(raw_derivative, window=5)
-
-        # Build direction flags, forcing early points to +1
-        direction = []
-        for idx, deriv in enumerate(smoothed_derivative):
-            if idx < IGNORE_DIRECTION_POINTS:
-                direction.append(1)
-                continue
-            if not math.isfinite(deriv):
-                direction.append(1)
-            else:
-                direction.append(1 if deriv >= 0 else -1)
-
-        # Suggest sweep error from stable region near 25% of data
-        sample_idx = min(max(int(len(smoothed_derivative) * 0.25), IGNORE_DIRECTION_POINTS), len(smoothed_derivative) - 1)
-        sample_deriv = smoothed_derivative[sample_idx] if smoothed_derivative else 0.0
-        if not math.isfinite(sample_deriv):
-            sample_deriv = 0.0
-        suggested_error = sample_deriv * SWEEP_ERROR_COEFFICIENT
-
-        self.direction_data = direction
-        self.columns["Direction"] = direction
-        self.units["Direction"] = ""
-        self.sweep_error_spin.blockSignals(True)
-        self.sweep_error_spin.setValue(suggested_error)
-        self.sweep_error_spin.blockSignals(False)
-
     @staticmethod
-    def _moving_average(values, window: int):
+    def _moving_average_static(values, window: int):
         """Simple centered moving average smoothing."""
         if window <= 1 or not values:
             return list(values)
@@ -655,21 +874,21 @@ class FMRPreview(QtWidgets.QMainWindow):
             smoothed.append(sum(segment) / len(segment) if segment else 0.0)
         return smoothed
 
-    def get_rotated_xy(self):
-        """Return rotated X and Y using current phase angle."""
-        if self._rotated_xy is not None:
-            return self._rotated_xy
-        x_key = next((key for key in self.columns if key.lower() == "x"), None)
-        y_key = next((key for key in self.columns if key.lower() == "y"), None)
+    def get_rotated_xy(self, session: PlotSession):
+        """Return rotated X and Y using current phase angle for a session."""
+        if session.rotated_xy is not None:
+            return session.rotated_xy
+        x_key = next((key for key in session.columns if key.lower() == "x"), None)
+        y_key = next((key for key in session.columns if key.lower() == "y"), None)
         if not x_key or not y_key:
-            self._rotated_xy = (None, None)
-            return self._rotated_xy
-        x_vals = self.columns.get(x_key, [])
-        y_vals = self.columns.get(y_key, [])
+            session.rotated_xy = (None, None)
+            return session.rotated_xy
+        x_vals = session.columns.get(x_key, [])
+        y_vals = session.columns.get(y_key, [])
         length = min(len(x_vals), len(y_vals))
         if length == 0:
-            self._rotated_xy = (None, None)
-            return self._rotated_xy
+            session.rotated_xy = (None, None)
+            return session.rotated_xy
         angle_rad = math.radians(self.current_phase_deg)
         cos_a = math.cos(angle_rad)
         sin_a = math.sin(angle_rad)
@@ -682,19 +901,22 @@ class FMRPreview(QtWidgets.QMainWindow):
                 continue
             rot_x.append(xv * cos_a - yv * sin_a)
             rot_y.append(xv * sin_a + yv * cos_a)
-        self._rotated_xy = (rot_x, rot_y)
-        return self._rotated_xy
+        session.rotated_xy = (rot_x, rot_y)
+        return session.rotated_xy
 
     def suggest_phase_angle(self):
         """Estimate phase to minimize Y variance for Field >= cutoff."""
-        x_key = next((key for key in self.columns if key.lower() == "x"), None)
-        y_key = next((key for key in self.columns if key.lower() == "y"), None)
-        field_key = next((key for key in self.columns if key.lower() == "field"), None)
+        if not self.sessions:
+            return 0.0
+        session = self.sessions[0]
+        x_key = next((key for key in session.columns if key.lower() == "x"), None)
+        y_key = next((key for key in session.columns if key.lower() == "y"), None)
+        field_key = next((key for key in session.columns if key.lower() == "field"), None)
         if not x_key or not y_key or not field_key:
             return 0.0
-        x_vals = self.columns.get(x_key, [])
-        y_vals = self.columns.get(y_key, [])
-        field_vals = self.columns.get(field_key, [])
+        x_vals = session.columns.get(x_key, [])
+        y_vals = session.columns.get(y_key, [])
+        field_vals = session.columns.get(field_key, [])
         length = min(len(x_vals), len(y_vals), len(field_vals))
         if length == 0:
             return 0.0
@@ -726,7 +948,8 @@ class FMRPreview(QtWidgets.QMainWindow):
         """Set current phase, keep controls in sync, optionally refresh plot."""
         clamped = (angle_deg) if abs(angle_deg)<=180.0 else (angle_deg%(180*-np.sign(angle_deg)))
         self.current_phase_deg = clamped
-        self._rotated_xy = None
+        for session in self.sessions:
+            session.rotated_xy = None
         self._suppress_phase = True
         if source != "dial":
             self.phase_dial.setValue(int(round(clamped)))
@@ -738,11 +961,16 @@ class FMRPreview(QtWidgets.QMainWindow):
 
     def update_titles(self):
         """Update plot title and file display with current phase."""
-        base = os.path.basename(self.current_file_path) if self.current_file_path else "No file loaded"
+        count = len(self.sessions)
+        base_name = os.path.basename(self.current_file_path) if self.current_file_path else "No file loaded"
         phase_text = f"(phase {self.current_phase_deg:.2f}°)"
-        display_path = self.current_file_path or "No file loaded"
-        self.file_path_edit.setText(f"{display_path} {phase_text}")
-        self.plot_widget.setTitle(base)
+        if count == 0:
+            self.file_path_edit.setText(f"No file loaded {phase_text}")
+            self.plot_widget.setTitle("No file loaded")
+            self.setWindowTitle("FMR CSV Preview")
+            return
+        self.file_path_edit.setText(f"{base_name} {phase_text} — {count} file(s) loaded")
+        self.plot_widget.setTitle(f"{count} file(s) plotted")
         self.setWindowTitle("FMR CSV Preview")
 
 
