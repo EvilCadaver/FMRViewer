@@ -10,7 +10,8 @@ import numpy as np
 
 # Lightweight CSV plotting helper with optional derivative/integral overlay
 
-DATA_DIR_NAME = "Data"
+# Default Data directory (absolute path).
+DATA_DIR_PATH = r"c:\git\FMRViewer\Data"
 SWEEP_ERROR_COEFFICIENT = 0.38
 IGNORE_DIRECTION_POINTS = 10  # points at start assumed positive sweep
 PHASE_CUTOFF_FIELD = 500  # Oe to estimate initial phase
@@ -133,7 +134,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle("FMR CSV Preview")
         # Default data directory lives alongside the script in Data/
-        self.data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), DATA_DIR_NAME)
+        self.data_dir = DATA_DIR_PATH
 
         # In-memory state for loaded CSVs
         self.sessions = []  # list[PlotSession]
