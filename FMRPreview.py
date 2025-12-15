@@ -116,6 +116,8 @@ class PlotSession:
         self.color = None
         self.weight = 2
         self.scale = 1.0
+        self.phase_deg = 0.0
+        self.sweep_error = 0.0
         self.rotated_xy = None  # cached rotated X/Y for current phase
 
 
@@ -128,12 +130,12 @@ class FMRPreview(QtWidgets.QMainWindow):
 
         # In-memory state for loaded CSVs
         self.sessions = []  # list[PlotSession]
+        self.selected_session_idx = -1
         self.display_to_column = {}  # "Field (Oe)" -> "Field"
         self._suppress_combo = False  # guard to prevent signal loops while we adjust combos
         self._last_x_display = ""  # previous X selection (for swap logic)
         self._last_y_display = ""  # previous Y selection (for swap logic)
         self._secondary_curves = []  # plot items for derivative/integral overlay
-        self.current_phase_deg = 0.0
         self._suppress_phase = False
         self.current_file_path = ""
 
@@ -233,7 +235,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.sweep_error_spin.setDecimals(0)
         self.sweep_error_spin.setRange(0, 1000)
         self.sweep_error_spin.setSingleStep(1)
-        self.sweep_error_spin.valueChanged.connect(self.update_plot)
+        self.sweep_error_spin.valueChanged.connect(self.on_sweep_error_changed)
 
         sweep_row = QtWidgets.QHBoxLayout()
         sweep_row.addWidget(QtWidgets.QLabel("Sweep error shift:"))
@@ -271,7 +273,6 @@ class FMRPreview(QtWidgets.QMainWindow):
         left_col.addLayout(sweep_row)
         left_col.addLayout(phase_spin_row)
         left_col.addLayout(phase_dial_row)
-        left_col.addLayout(header_layout)
         left_col.addStretch()
 
         controls_row = QtWidgets.QHBoxLayout()
@@ -367,20 +368,11 @@ class FMRPreview(QtWidgets.QMainWindow):
             self.sessions.append(session)
             added += 1
             existing_paths.add(path)
-            self.current_file_path = path
             self.last_viewed_dir = os.path.dirname(path)
-            self.header_display.setPlainText(session.header_text or "Header not found.")
-            # Only set suggested sweep error for the very first session
-            if len(self.sessions) == 1:
-                suggested = getattr(session, "suggested_error", 0.0)
-                self.sweep_error_spin.blockSignals(True)
-                self.sweep_error_spin.setValue(suggested)
-                self.sweep_error_spin.blockSignals(False)
 
         if added:
             self.populate_axis_choices()
-            self.update_file_list_ui()
-            self.update_plot()
+            self.select_session(len(self.sessions) - 1)
 
     def build_session(self, path: str):
         """Parse a file and create a PlotSession instance."""
@@ -402,6 +394,7 @@ class FMRPreview(QtWidgets.QMainWindow):
 
         session = PlotSession(path, columns, units, header_text, direction_data)
         session.suggested_error = suggested_error
+        session.sweep_error = suggested_error
         return session
 
     def update_file_list_ui(self):
@@ -425,7 +418,7 @@ class FMRPreview(QtWidgets.QMainWindow):
 
             name_label = QtWidgets.QLabel(os.path.basename(session.path))
             name_label.setToolTip(session.path)
-            name_label.mousePressEvent = partial(self.on_session_selected, session=session)
+            name_label.mousePressEvent = lambda event, i=idx: self.select_session(i)
 
             adjust_btn = QtWidgets.QPushButton("Adjust…")
             adjust_btn.setMaximumWidth(80)
@@ -444,6 +437,17 @@ class FMRPreview(QtWidgets.QMainWindow):
             row_layout.addWidget(scale_label)
             row_layout.addWidget(remove_btn)
 
+            if idx == self.selected_session_idx:
+                row_widget.setStyleSheet("background-color: #dfe8ff;")
+                font = name_label.font()
+                font.setBold(True)
+                name_label.setFont(font)
+            else:
+                row_widget.setStyleSheet("")
+                font = name_label.font()
+                font.setBold(False)
+                name_label.setFont(font)
+
             self.files_list_layout.addWidget(row_widget)
         self.files_list_layout.addStretch()
 
@@ -451,20 +455,18 @@ class FMRPreview(QtWidgets.QMainWindow):
         if index < 0 or index >= len(self.sessions):
             return
         del self.sessions[index]
-        if self.sessions:
-            self.current_file_path = self.sessions[-1].path
-            self.header_display.setPlainText(self.sessions[-1].header_text or "Header not found.")
-        else:
-            self.current_file_path = ""
-            self.header_display.setPlainText("Header will show after loading a file.")
         self.populate_axis_choices()
-        self.update_file_list_ui()
-        self.update_plot()
+        if self.sessions:
+            new_index = min(index, len(self.sessions) - 1)
+            self.select_session(new_index)
+        else:
+            self.select_session(-1)
 
     def open_adjust_dialog(self, index: int):
         """Dialog to tweak color, weight, and scale for a session."""
         if index < 0 or index >= len(self.sessions):
             return
+        self.select_session(index)
         session = self.sessions[index]
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle(f"Adjust plot: {os.path.basename(session.path)}")
@@ -518,13 +520,6 @@ class FMRPreview(QtWidgets.QMainWindow):
             self.update_file_list_ui()
             self.update_plot()
 
-    def on_session_selected(self, event=None, session: PlotSession = None):
-        """Show header text for the clicked session name."""
-        if session is None:
-            return
-        self.current_file_path = session.path
-        self.header_display.setPlainText(session.header_text or "Header not found.")
-        self.update_titles()
 
     def populate_axis_choices(self):
         """Fill the X/Y combos with available columns and pick sensible defaults."""
@@ -651,11 +646,21 @@ class FMRPreview(QtWidgets.QMainWindow):
 
     def on_phase_plus_90(self):
         """Increment phase by +90 degrees."""
-        self.set_phase(self.current_phase_deg + 90.0)
+        current = self.get_current_phase_deg()
+        self.set_phase(current + 90.0)
 
     def on_phase_minus_90(self):
         """Decrement phase by -90 degrees."""
-        self.set_phase(self.current_phase_deg - 90.0)
+        current = self.get_current_phase_deg()
+        self.set_phase(current - 90.0)
+
+    def on_sweep_error_changed(self, value: float):
+        """Update sweep error for the selected session and redraw."""
+        session = self.get_selected_session()
+        if session is None:
+            return
+        session.sweep_error = value
+        self.update_plot()
 
     def update_plot(self):
         """Render the current column selections onto the plot widget."""
@@ -856,7 +861,7 @@ class FMRPreview(QtWidgets.QMainWindow):
                 values = rot_x if lower == "x" else rot_y
         elif lower == "field" and values:
             if session.direction_data and len(session.direction_data) == len(values):
-                shift = self.sweep_error_spin.value()
+                shift = session.sweep_error
                 values = [val - dir_flag * shift for val, dir_flag in zip(values, session.direction_data)]
         return values
 
@@ -889,7 +894,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         if length == 0:
             session.rotated_xy = (None, None)
             return session.rotated_xy
-        angle_rad = math.radians(self.current_phase_deg)
+        angle_rad = math.radians(session.phase_deg)
         cos_a = math.cos(angle_rad)
         sin_a = math.sin(angle_rad)
         rot_x = []
@@ -906,9 +911,7 @@ class FMRPreview(QtWidgets.QMainWindow):
 
     def suggest_phase_angle(self):
         """Estimate phase to minimize Y variance for Field >= cutoff."""
-        if not self.sessions:
-            return 0.0
-        session = self.sessions[0]
+        session = self.get_selected_session() or (self.sessions[0] if self.sessions else None)
         x_key = next((key for key in session.columns if key.lower() == "x"), None)
         y_key = next((key for key in session.columns if key.lower() == "y"), None)
         field_key = next((key for key in session.columns if key.lower() == "field"), None)
@@ -944,12 +947,56 @@ class FMRPreview(QtWidgets.QMainWindow):
         angle_rad = 0.5 * math.atan2(2 * sxy, sxx - syy)
         return math.degrees(angle_rad)
 
+    def get_selected_session(self):
+        if 0 <= self.selected_session_idx < len(self.sessions):
+            return self.sessions[self.selected_session_idx]
+        return None
+
+    def select_session(self, index: int):
+        """Select a session by index and refresh controls/UI."""
+        if index < 0 or index >= len(self.sessions):
+            self.selected_session_idx = -1
+            self.current_file_path = ""
+            self.header_display.setPlainText("Header will show after loading a file.")
+            self._suppress_phase = True
+            self.phase_dial.setValue(0)
+            self.phase_spin.setValue(0.0)
+            self._suppress_phase = False
+            self.sweep_error_spin.blockSignals(True)
+            self.sweep_error_spin.setValue(0.0)
+            self.sweep_error_spin.blockSignals(False)
+            self.update_titles()
+            self.update_file_list_ui()
+            self.update_plot()
+            return
+
+        self.selected_session_idx = index
+        session = self.sessions[index]
+        self.current_file_path = session.path
+        self.header_display.setPlainText(session.header_text or "Header not found.")
+        self._suppress_phase = True
+        self.phase_dial.setValue(int(round(session.phase_deg)))
+        self.phase_spin.setValue(session.phase_deg)
+        self._suppress_phase = False
+        self.sweep_error_spin.blockSignals(True)
+        self.sweep_error_spin.setValue(session.sweep_error)
+        self.sweep_error_spin.blockSignals(False)
+        self.update_titles()
+        self.update_file_list_ui()
+        self.update_plot()
+
+    def get_current_phase_deg(self):
+        session = self.get_selected_session()
+        return session.phase_deg if session else 0.0
+
     def set_phase(self, angle_deg: float, source: str = None, update: bool = True):
-        """Set current phase, keep controls in sync, optionally refresh plot."""
-        clamped = (angle_deg) if abs(angle_deg)<=180.0 else (angle_deg%(180*-np.sign(angle_deg)))
-        self.current_phase_deg = clamped
-        for session in self.sessions:
-            session.rotated_xy = None
+        """Set current phase for the selected session, sync controls, optionally refresh plot."""
+        session = self.get_selected_session()
+        if session is None:
+            return
+        clamped = max(-180.0, min(180.0, angle_deg))
+        session.phase_deg = clamped
+        session.rotated_xy = None
         self._suppress_phase = True
         if source != "dial":
             self.phase_dial.setValue(int(round(clamped)))
@@ -962,14 +1009,16 @@ class FMRPreview(QtWidgets.QMainWindow):
     def update_titles(self):
         """Update plot title and file display with current phase."""
         count = len(self.sessions)
-        base_name = os.path.basename(self.current_file_path) if self.current_file_path else "No file loaded"
-        phase_text = f"(phase {self.current_phase_deg:.2f}°)"
+        selected = self.get_selected_session()
+        base_name = os.path.basename(selected.path) if selected else "No file loaded"
+        phase_val = self.get_current_phase_deg()
+        phase_text = f"(phase {phase_val:.2f} deg)"
         if count == 0:
             self.file_path_edit.setText(f"No file loaded {phase_text}")
             self.plot_widget.setTitle("No file loaded")
             self.setWindowTitle("FMR CSV Preview")
             return
-        self.file_path_edit.setText(f"{base_name} {phase_text} — {count} file(s) loaded")
+        self.file_path_edit.setText(f"{base_name} {phase_text} - {count} file(s) loaded")
         self.plot_widget.setTitle(f"{count} file(s) plotted")
         self.setWindowTitle("FMR CSV Preview")
 
