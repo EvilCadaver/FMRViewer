@@ -1027,7 +1027,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         session = self.get_selected_session()
         if session is None:
             return
-        clamped = max(-180.0, min(180.0, angle_deg))
+        clamped = (angle_deg) if abs(angle_deg)<=180.0 else (angle_deg%(180*-np.sign(angle_deg)))
         session.phase_deg = clamped
         session.rotated_xy = None
         self._suppress_phase = True
