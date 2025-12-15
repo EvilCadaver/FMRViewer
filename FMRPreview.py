@@ -228,7 +228,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.reset_phase_button.clicked.connect(self.on_reset_phase)
 
         phase_spin_row = QtWidgets.QHBoxLayout()
-        phase_spin_row.addWidget(QtWidgets.QLabel("Phase shift (deg):"))
+        phase_spin_row.addWidget(QtWidgets.QLabel("Phase shift:"))
         phase_spin_row.addWidget(self.phase_spin)
         phase_spin_row.addWidget(self.guess_phase_button)
         phase_spin_row.addWidget(self.reset_phase_button)
@@ -1045,7 +1045,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         selected = self.get_selected_session()
         base_name = os.path.basename(selected.path) if selected else "No file loaded"
         phase_val = self.get_current_phase_deg()
-        phase_text = f"(phase {phase_val:.2f} deg)"
+        phase_text = f"(phase {phase_val:.2f}°)"
         if count == 0:
             self.file_path_edit.setText(f"No file loaded {phase_text}")
             self.plot_widget.setTitle("No file loaded")
