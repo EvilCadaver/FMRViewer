@@ -22,27 +22,36 @@ def parse_numeric_columns(csv_path: str):
         units row : units for each column (e.g., s,Oe,V,V,V,deg)
         data rows : numeric values
 
-    Returns two dicts:
+    Returns two dicts and the detected file header text that precedes the column names:
         columns[name] -> list of float values
         units[name]   -> unit string (or empty if missing)
+        header_text   -> lines before the CSV header (e.g., sample name, params)
     """
     with open(csv_path, newline="") as handle:
-        # Strip out empty lines so the CSV reader only sees meaningful rows
-        lines = [line.strip() for line in handle if line.strip()]
+        raw_lines = [line.rstrip("\n") for line in handle]
 
     # Pick a header row. Prefer a row containing "field" to match typical data,
     # otherwise fall back to the first comma-separated row.
-    header_index = next(
-        (idx for idx, line in enumerate(lines) if "," in line and "field" in line.lower()),
-        None,
-    )
-    if header_index is None:
-        header_index = next((idx for idx, line in enumerate(lines) if "," in line), None)
+    header_index = None
+    for idx, raw_line in enumerate(raw_lines):
+        line = raw_line.strip()
+        if not line or "," not in line:
+            continue
+        if "field" in line.lower():
+            header_index = idx
+            break
+        if header_index is None:
+            header_index = idx
     if header_index is None:
         raise ValueError("Could not find a header row with comma-separated columns.")
 
+    header_text_lines = [ln for ln in raw_lines[:header_index] if ln.strip()]
+
+    # Build CSV-ready lines from the header forward, skipping empties
+    lines = [line.strip() for line in raw_lines[header_index:] if line.strip()]
+
     # Create a CSV reader from the header forward; rows are simple lists at this point.
-    reader = csv.reader(lines[header_index:])
+    reader = csv.reader(lines)
     try:
         header = next(reader)
     except StopIteration:
@@ -76,7 +85,9 @@ def parse_numeric_columns(csv_path: str):
     # Drop columns that never produced numeric data and align units accordingly
     columns = {name: vals for name, vals in columns.items() if vals}
     units = {name: units.get(name, "") for name in columns}
-    return columns, units
+
+    header_text = "\n".join(header_text_lines).strip()
+    return columns, units, header_text
 
 
 class FMRPreview(QtWidgets.QMainWindow):
@@ -122,6 +133,13 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.open_button = QtWidgets.QPushButton("Open CSV...")
         self.open_button.clicked.connect(self.choose_file)
         self.last_viewed_dir = None  # remember last folder visited during this session
+
+        self.header_display = QtWidgets.QPlainTextEdit()
+        self.header_display.setReadOnly(True)
+        self.header_display.setPlaceholderText("Header will show after loading a file.")
+        self.header_display.setMaximumHeight(90)
+        self.header_display.setMinimumHeight(60)
+        self.header_display.setPlainText("Header will show after loading a file.")
 
         # Axis selectors. Each combo shows column names (with units when available).
         self.x_combo = QtWidgets.QComboBox()
@@ -207,12 +225,16 @@ class FMRPreview(QtWidgets.QMainWindow):
         top_row.addWidget(self.file_path_edit, 1)
         top_row.addWidget(self.open_button)
 
+        header_layout = QtWidgets.QVBoxLayout()
+        header_layout.addWidget(self.header_display)
+
         left_col = QtWidgets.QVBoxLayout()
         left_col.addLayout(axes_row)
         left_col.addLayout(options_row)
         left_col.addLayout(sweep_row)
         left_col.addLayout(phase_spin_row)
         left_col.addLayout(phase_dial_row)
+        left_col.addLayout(header_layout)
         left_col.addStretch()
 
         controls_row = QtWidgets.QHBoxLayout()
@@ -286,11 +308,12 @@ class FMRPreview(QtWidgets.QMainWindow):
     def load_and_plot(self, path: str):
         """Parse a file, populate selectors, and render the plot."""
         try:
-            columns, units = parse_numeric_columns(path)
+            columns, units, header_text = parse_numeric_columns(path)
         except Exception as exc:  # noqa: BLE001
             QtWidgets.QMessageBox.warning(self, "Load error", str(exc))
             return
 
+        self.header_display.setPlainText(header_text or "Header not found.")
         if not columns:
             QtWidgets.QMessageBox.information(self, "No data", "No numeric columns found.")
             return
