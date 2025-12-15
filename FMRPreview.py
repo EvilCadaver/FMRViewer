@@ -14,18 +14,24 @@ DATA_DIR_NAME = "Data"
 SWEEP_ERROR_COEFFICIENT = 0.38
 IGNORE_DIRECTION_POINTS = 10  # points at start assumed positive sweep
 PHASE_CUTOFF_FIELD = 500  # Oe to estimate initial phase
-MAX_FILES = 10
+MAX_FILES = 16
 DEFAULT_COLORS = [
-    (200, 50, 50),
-    (50, 100, 200),
-    (50, 160, 120),
-    (200, 140, 50),
-    (120, 60, 200),
-    (0, 150, 180),
-    (180, 90, 90),
-    (90, 180, 90),
-    (180, 180, 60),
-    (90, 90, 180),
+    (220, 70, 70),
+    (60, 130, 220),
+    (60, 170, 140),
+    (220, 150, 60),
+    (140, 80, 220),
+    (0, 170, 200),
+    (200, 110, 110),
+    (110, 200, 110),
+    (210, 210, 80),
+    (110, 110, 210),
+    (240, 130, 40),
+    (40, 160, 240),
+    (160, 200, 60),
+    (200, 80, 170),
+    (120, 120, 120),
+    (60, 60, 60),
 ]
 
 
@@ -113,6 +119,7 @@ class PlotSession:
         self.units = units
         self.header_text = header_text
         self.direction_data = direction_data
+        self.base_color = None  # color assigned from the bank
         self.color = None
         self.weight = 2
         self.scale = 1.0
@@ -131,6 +138,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         # In-memory state for loaded CSVs
         self.sessions = []  # list[PlotSession]
         self.selected_session_idx = -1
+        self.color_queue = list(DEFAULT_COLORS)
         self.display_to_column = {}  # "Field (Oe)" -> "Field"
         self._suppress_combo = False  # guard to prevent signal loops while we adjust combos
         self._last_x_display = ""  # previous X selection (for swap logic)
@@ -141,12 +149,18 @@ class FMRPreview(QtWidgets.QMainWindow):
 
         # PyQtGraph plot surface
         self.plot_widget = pg.PlotWidget(background="w")
+        # Shared grid for primary axes; keep both directions visible
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.setLabel("left", "X (V)")
         self.plot_widget.setLabel("bottom", "Field (Oe)")
         # Attach a secondary ViewBox for the right-side axis
         plot_item = self.plot_widget.getPlotItem()
         plot_item.showAxis("right")
+        right_axis = plot_item.getAxis("right")
+        right_axis.setStyle(showValues=False)  # hide tick labels
+        right_axis.setTicks([])  # hide tick marks
+        right_axis.setPen(pg.mkPen(None))  # hide axis line
+        right_axis.setTextPen(pg.mkPen(None))  # hide label pen
         self.secondary_vb = pg.ViewBox()
         plot_item.scene().addItem(self.secondary_vb)
         plot_item.getAxis("right").linkToView(self.secondary_vb)
@@ -254,7 +268,7 @@ class FMRPreview(QtWidgets.QMainWindow):
         top_row.addWidget(self.open_button)
 
         header_layout = QtWidgets.QVBoxLayout()
-        header_layout.addWidget(QtWidgets.QLabel("File header:"))
+        # header_layout.addWidget(QtWidgets.QLabel("File header:"))
         header_layout.addWidget(self.header_display)
 
         self.files_list_layout = QtWidgets.QVBoxLayout()
@@ -262,28 +276,29 @@ class FMRPreview(QtWidgets.QMainWindow):
         self.files_list_layout.setSpacing(4)
         self.files_list_layout.addStretch()
         files_column = QtWidgets.QVBoxLayout()
-        files_column.addWidget(QtWidgets.QLabel("Loaded files (max 10):"))
+        files_column.addWidget(QtWidgets.QLabel("Loaded files (max " + str(MAX_FILES) + "):"))
         files_column.addLayout(self.files_list_layout, 1)
         files_column.addStretch()
 
-        left_col = QtWidgets.QVBoxLayout()
-        left_col.addLayout(header_layout)
-        left_col.addLayout(axes_row)
-        left_col.addLayout(options_row)
-        left_col.addLayout(sweep_row)
-        left_col.addLayout(phase_spin_row)
-        left_col.addLayout(phase_dial_row)
-        left_col.addStretch()
+        right_col = QtWidgets.QVBoxLayout()
+        right_col.addLayout(header_layout)
+        right_col.addLayout(axes_row)
+        right_col.addLayout(options_row)
+        right_col.addLayout(sweep_row)
+        right_col.addLayout(phase_spin_row)
+        right_col.addLayout(phase_dial_row)
+        right_col.addLayout(files_column)
+        right_col.addStretch()
 
         controls_row = QtWidgets.QHBoxLayout()
-        controls_row.addLayout(left_col)
+        controls_row.addLayout(right_col)
         controls_row.addSpacing(12)
         controls_row.addStretch()
 
         body_row = QtWidgets.QHBoxLayout()
-        body_row.addLayout(files_column)
         body_row.addWidget(self.plot_widget, 1)
         body_row.addLayout(controls_row)
+        # body_row.addLayout(files_column)
 
         layout = QtWidgets.QVBoxLayout()
         layout.addLayout(top_row)
@@ -349,30 +364,46 @@ class FMRPreview(QtWidgets.QMainWindow):
             return
         existing_paths = {session.path for session in self.sessions}
         added = 0
+        target_index = -1
         for path in paths:
             if len(self.sessions) >= MAX_FILES:
                 QtWidgets.QMessageBox.information(
-                    self, "Limit reached", f"Maximum of {MAX_FILES} files. Skipping extras."
+                    self, "Limit reached", f"Maximum of {MAX_FILES} files. Close some to open more."
                 )
                 break
             if not path or not os.path.isfile(path):
                 continue
             if path in existing_paths:
+                idx = next((i for i, sess in enumerate(self.sessions) if sess.path == path), -1)
+                QtWidgets.QMessageBox.information(
+                    self, "Already loaded", f"{os.path.basename(path)} is already loaded."
+                )
+                if idx >= 0:
+                    target_index = idx
                 continue  # already loaded
             session = self.build_session(path)
             if session is None:
                 continue
             if session.color is None:
-                color_idx = len(self.sessions) % len(DEFAULT_COLORS)
-                session.color = DEFAULT_COLORS[color_idx]
+                if self.color_queue:
+                    base_color = self.color_queue.pop(0)
+                else:
+                    base_color = DEFAULT_COLORS[len(self.sessions) % len(DEFAULT_COLORS)]
+                session.base_color = base_color
+                session.color = base_color
             self.sessions.append(session)
             added += 1
             existing_paths.add(path)
             self.last_viewed_dir = os.path.dirname(path)
+            target_index = len(self.sessions) - 1
 
         if added:
             self.populate_axis_choices()
-            self.select_session(len(self.sessions) - 1)
+        if target_index != -1:
+            self.select_session(target_index)
+        elif added:
+            self.update_file_list_ui()
+            self.update_plot()
 
     def build_session(self, path: str):
         """Parse a file and create a PlotSession instance."""
@@ -454,7 +485,9 @@ class FMRPreview(QtWidgets.QMainWindow):
     def remove_session(self, index: int):
         if index < 0 or index >= len(self.sessions):
             return
-        del self.sessions[index]
+        removed = self.sessions.pop(index)
+        if removed and removed.base_color:
+            self.color_queue.append(removed.base_color)
         self.populate_axis_choices()
         if self.sessions:
             new_index = min(index, len(self.sessions) - 1)
