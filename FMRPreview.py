@@ -5,6 +5,7 @@ import os
 import sys
 from PyQt5 import QtCore, QtWidgets
 import pyqtgraph as pg
+import numpy as np
 
 # Lightweight CSV plotting helper with optional derivative/integral overlay
 
@@ -700,7 +701,7 @@ class FMRPreview(QtWidgets.QMainWindow):
 
     def set_phase(self, angle_deg: float, source: str = None, update: bool = True):
         """Set current phase, keep controls in sync, optionally refresh plot."""
-        clamped = max(min(angle_deg, 180.0), -180.0)
+        clamped = (angle_deg) if abs(angle_deg)<=180.0 else (angle_deg%(180*-np.sign(angle_deg)))
         self.current_phase_deg = clamped
         self._rotated_xy = None
         self._suppress_phase = True
