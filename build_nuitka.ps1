@@ -29,6 +29,7 @@ $cmdBase = @($Python, "-m", "nuitka")
 $argsList = @(
     "FMRPreview.py",
     "--standalone",
+    "--report=build-report.json",
     "--plugin-enable=pyqt5",
     "--include-qt-plugins=sensible",
     "--include-data-file=$Config=$Config",
