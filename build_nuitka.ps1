@@ -29,7 +29,8 @@ $cmdBase = @($Python, "-m", "nuitka")
 $argsList = @(
     "FMRPreview.py",
     "--standalone",
-    "--enable-plugin=qt-plugins",
+    "--plugin-enable=pyqt5",
+    "--include-qt-plugins=sensible",
     "--plugin-enable=numpy",
     "--include-data-file=$Config=$Config",
     "--assume-yes-for-downloads"
@@ -58,4 +59,3 @@ Write-Host "Invoking:" ($cmdBase + $argsList -join " ")
 if ($LASTEXITCODE -ne 0) {
     throw "Nuitka build failed with exit code $LASTEXITCODE"
 }
-
