@@ -1,5 +1,6 @@
 ﻿import csv
 import glob
+import json
 import math
 import os
 import sys
@@ -10,30 +11,102 @@ import numpy as np
 
 # Lightweight CSV plotting helper with optional derivative/integral overlay
 
-# Default Data directory (absolute path).
-DATA_DIR_PATH = r"c:\git\FMRViewer\Data"
-SWEEP_ERROR_COEFFICIENT = 0.38
-IGNORE_DIRECTION_POINTS = 10  # points at start assumed positive sweep
-PHASE_CUTOFF_FIELD = 500  # Oe to estimate initial phase
-MAX_FILES = 16
-DEFAULT_COLORS = [
-    (220, 70, 70),
-    (60, 130, 220),
-    (60, 170, 140),
-    (220, 150, 60),
-    (140, 80, 220),
-    (0, 170, 200),
-    (200, 110, 110),
-    (110, 200, 110),
-    (210, 210, 80),
-    (110, 110, 210),
-    (240, 130, 40),
-    (40, 160, 240),
-    (160, 200, 60),
-    (200, 80, 170),
-    (120, 120, 120),
-    (60, 60, 60),
-]
+# Default config values stored in a sidecar ASCII JSON file.
+CONFIG_FILENAME = "FMRPreview.cfg"
+DEFAULT_CONFIG = {
+    "DATA_DIR_PATH": r"c:\git\FMRViewer\Data",
+    "SWEEP_ERROR_COEFFICIENT": 0.38,
+    "IGNORE_DIRECTION_POINTS": 10,
+    "PHASE_CUTOFF_FIELD": 500,
+    "MAX_FILES": 16,
+    "DEFAULT_COLORS": [
+        [220, 70, 70],
+        [60, 130, 220],
+        [60, 170, 140],
+        [220, 150, 60],
+        [140, 80, 220],
+        [0, 170, 200],
+        [200, 110, 110],
+        [110, 200, 110],
+        [210, 210, 80],
+        [110, 110, 210],
+        [240, 130, 40],
+        [40, 160, 240],
+        [160, 200, 60],
+        [200, 80, 170],
+        [120, 120, 120],
+        [60, 60, 60],
+    ],
+}
+
+
+def _config_path():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), CONFIG_FILENAME)
+
+
+def _write_default_config(path: str):
+    with open(path, "w", encoding="ascii") as handle:
+        json.dump(DEFAULT_CONFIG, handle, indent=2, ensure_ascii=True)
+        handle.write("\n")
+
+
+def _valid_color_triplet(color):
+    return (
+        isinstance(color, (list, tuple))
+        and len(color) == 3
+        and all(isinstance(component, (int, float)) for component in color)
+    )
+
+
+def _normalize_config(parsed):
+    config = dict(DEFAULT_CONFIG)
+    if isinstance(parsed, dict):
+        for key in config.keys():
+            if key in parsed:
+                config[key] = parsed[key]
+
+    config["DATA_DIR_PATH"] = str(config.get("DATA_DIR_PATH", DEFAULT_CONFIG["DATA_DIR_PATH"]))
+    config["SWEEP_ERROR_COEFFICIENT"] = float(
+        config.get("SWEEP_ERROR_COEFFICIENT", DEFAULT_CONFIG["SWEEP_ERROR_COEFFICIENT"])
+    )
+    config["IGNORE_DIRECTION_POINTS"] = int(
+        config.get("IGNORE_DIRECTION_POINTS", DEFAULT_CONFIG["IGNORE_DIRECTION_POINTS"])
+    )
+    config["PHASE_CUTOFF_FIELD"] = float(
+        config.get("PHASE_CUTOFF_FIELD", DEFAULT_CONFIG["PHASE_CUTOFF_FIELD"])
+    )
+    config["MAX_FILES"] = int(config.get("MAX_FILES", DEFAULT_CONFIG["MAX_FILES"]))
+
+    colors = []
+    for color in config.get("DEFAULT_COLORS", DEFAULT_CONFIG["DEFAULT_COLORS"]):
+        if _valid_color_triplet(color):
+            colors.append(tuple(int(round(component)) for component in color))
+    if not colors:
+        colors = [tuple(color) for color in DEFAULT_CONFIG["DEFAULT_COLORS"]]
+    config["DEFAULT_COLORS"] = colors
+    return config
+
+
+def _load_config():
+    cfg_path = _config_path()
+    if os.path.isfile(cfg_path):
+        try:
+            with open(cfg_path, "r", encoding="ascii") as handle:
+                parsed = json.load(handle)
+            return _normalize_config(parsed)
+        except Exception:
+            pass
+    _write_default_config(cfg_path)
+    return _normalize_config(DEFAULT_CONFIG)
+
+
+CONFIG = _load_config()
+DATA_DIR_PATH = CONFIG["DATA_DIR_PATH"]
+SWEEP_ERROR_COEFFICIENT = CONFIG["SWEEP_ERROR_COEFFICIENT"]
+IGNORE_DIRECTION_POINTS = CONFIG["IGNORE_DIRECTION_POINTS"]
+PHASE_CUTOFF_FIELD = CONFIG["PHASE_CUTOFF_FIELD"]
+MAX_FILES = CONFIG["MAX_FILES"]
+DEFAULT_COLORS = CONFIG["DEFAULT_COLORS"]
 
 
 def parse_numeric_columns(csv_path: str):
