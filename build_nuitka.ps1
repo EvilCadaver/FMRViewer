@@ -1,5 +1,5 @@
 <# 
-Build FMRPreview with Nuitka.
+Build FMRPreview with Nuitka. Didn't work well for me.
 Prereqs (64-bit): Python 3.13 environment with Nuitka (and zstandard for onefile compression),
 and the VS 2022 Build Tools (MSVC + Windows 10/11 SDK).
 
