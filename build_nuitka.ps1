@@ -31,7 +31,6 @@ $argsList = @(
     "--standalone",
     "--plugin-enable=pyqt5",
     "--include-qt-plugins=sensible",
-    "--plugin-enable=numpy",
     "--include-data-file=$Config=$Config",
     "--assume-yes-for-downloads"
 )
@@ -49,7 +48,7 @@ if ($OneFile) {
 }
 
 if ($NoConsole) {
-    $argsList += "--windows-disable-console"
+    $argsList += "--windows-console-mode=disable"
 }
 
 Write-Host "Invoking:" ($cmdBase + $argsList -join " ")

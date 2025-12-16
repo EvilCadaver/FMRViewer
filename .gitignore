@@ -1,0 +1,19 @@
+# Bytecode and cache
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+
+# Nuitka build outputs
+*.build/
+*.dist/
+.nuitka-cache/
+*.onefile-build/
+*.onefile-dist/
+
+# Misc build artifacts
+build/
+dist/
+*.log
+*.tmp
+*.bak
