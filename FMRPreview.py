@@ -14,7 +14,7 @@ import numpy as np
 # Default config values stored in a sidecar ASCII JSON file.
 CONFIG_FILENAME = "FMRPreview.cfg"
 DEFAULT_CONFIG = {
-    "DATA_DIR_PATH": r"c:\git\FMRViewer\Data",
+    "DATA_DIR_PATH": r"..\Data",
     "SWEEP_ERROR_COEFFICIENT": 0.38,
     "IGNORE_DIRECTION_POINTS": 10,
     "PHASE_CUTOFF_FIELD": 500,
