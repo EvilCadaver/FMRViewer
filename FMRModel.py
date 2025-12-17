@@ -74,33 +74,33 @@ class ParameterSpec:
 
 
 DEFAULT_PARAMETER_SPECS: Sequence[ParameterSpec] = (
-    ParameterSpec("Js", "Saturation polarization", 21460.0, "Oe", "Saturation polarization"),
+    ParameterSpec("Js", "Saturation polarization", 21.46, "kG", "Saturation polarization"),
     ParameterSpec("g", "Gyromagnetic factor", 2.088, "", "Dimensionless g-factor"),
     ParameterSpec("alpha", "Damping", 1.35e-3, "", "Dimensionless damping"),
     ParameterSpec("rho", "Resistivity", 9.7, "uOhm*cm", "Electrical resistivity"),
     ParameterSpec("f", "Frequency", 70.0, "GHz", "Microwave frequency"),
-    ParameterSpec("gamma", "Gamma", 0.001399611, "GHz/Oe", "User-supplied constant"),
+    ParameterSpec("gamma", "Gamma", 1.399611, "GHz/kOe", "User-supplied constant"),
     ParameterSpec("field_power", "Field power", 2.0, "", "Exponent applied to H"),
 )
 
 
 @dataclass(frozen=True)
 class ModelParameters:
-    Js: float = 21460.0
+    Js: float = 21.46
     g: float = 2.088
     alpha: float = 1.35e-3
     rho: float = 9.7
     f: float = 70.0
-    gamma: float = 0.001399611
+    gamma: float = 1.399611
     field_power: float = 2.0
     units: Dict[str, str] = field(
         default_factory=lambda: {
-            "Js": "Oe",
+            "Js": "kG",
             "g": "",
             "alpha": "",
             "rho": "uOhm*cm",
             "f": "GHz",
-            "gamma": "GHz/Oe",
+            "gamma": "GHz/kOe",
             "field_power": "",
         }
     )
@@ -131,11 +131,11 @@ def parameter_specs() -> Sequence[ParameterSpec]:
 
 def cgs_to_si_parameters(params: ModelParameters) -> ModelParameters:
     # Optional helper: convert to SI if needed for specific equations.
-        # Js: Oe -> T (1 Oe = 1e-4 T)
+    # Js: kG -> T (1 kG = 0.1 T)
     # rho: uOhm*cm -> ohm*m (1 uOhm*cm = 1e-8 ohm*m)
     # f: GHz -> Hz
     return ModelParameters(
-        Js=params.Js * 1e-4,
+        Js=params.Js * 0.1,
         g=params.g,
         alpha=params.alpha,
         rho=params.rho * 1e-8,
@@ -312,19 +312,19 @@ if QtWidgets is not None:
 
             self.plot_widget = pg.PlotWidget(background="w")
             self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-            self.plot_widget.setLabel("bottom", "Field (Oe)")
+            self.plot_widget.setLabel("bottom", "Field (kOe)")
             self.plot_widget.setLabel("left", "Value")
             self.legend = None
 
             self.field_start = QtWidgets.QDoubleSpinBox()
             self.field_start.setRange(0, 1e6)
             self.field_start.setDecimals(2)
-            self.field_start.setValue(500.0)
+            self.field_start.setValue(0.5)
 
             self.field_stop = QtWidgets.QDoubleSpinBox()
             self.field_stop.setRange(-1e6, 1e6)
             self.field_stop.setDecimals(6)
-            self.field_stop.setValue(20000.0)
+            self.field_stop.setValue(20.0)
 
             self.field_points = QtWidgets.QSpinBox()
             self.field_points.setRange(2, 1000000)
@@ -373,8 +373,8 @@ if QtWidgets is not None:
         def _build_field_controls(self):
             group = QtWidgets.QGroupBox("Field sweep")
             layout = QtWidgets.QFormLayout()
-            layout.addRow("Start (Oe)", self.field_start)
-            layout.addRow("Stop (Oe)", self.field_stop)
+            layout.addRow("Start (kOe)", self.field_start)
+            layout.addRow("Stop (kOe)", self.field_stop)
             layout.addRow("Points", self.field_points)
             group.setLayout(layout)
             return group
@@ -480,7 +480,7 @@ if QtWidgets is not None:
                 y_label = "dP/dH"
             if self.log_scale_checkbox.isChecked():
                 y_label = f"log10({y_label})"
-            self.plot_widget.setLabel("bottom", "Field (Oe)")
+            self.plot_widget.setLabel("bottom", "Field (kOe)")
             self.plot_widget.setLabel("left", y_label)
 
             errors = []
