@@ -1,17 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, Mapping, Optional, Sequence
+from typing import Dict, Iterable, Mapping, Optional, Sequence, TYPE_CHECKING, Type
 
 import numpy as np
 
 try:
-    from PyQt5 import QtCore, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
     import pyqtgraph as pg
 except Exception:  # noqa: BLE001
     QtCore = None
+    QtGui = None
     QtWidgets = None
     pg = None
+
+if TYPE_CHECKING:
+    from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox
+    ModelClass = Type["BaseFMRModel"]
+else:
+    QCheckBox = object
+    QDoubleSpinBox = object
+    ModelClass = object
 
 ArrayLike = np.ndarray | list[float] | tuple[float, ...]
 ComplexArray = np.ndarray
@@ -203,7 +212,7 @@ class ModelOne(BaseFMRModel):
         ms = params.Js / (4.0 * np.pi)
         b_field = h_field + 4.0 * np.pi * ms
         omg = params.f / (params.gamma * params.g)
-        numerator = ms * (b_field + 1j * params.alpha * omg)
+        numerator = -ms * (b_field + 1j * params.alpha * omg)
         denominator = (omg**2) - (h_field + 1j * params.alpha * omg) * (
             b_field + 1j * params.alpha * omg
         )
@@ -282,7 +291,7 @@ if QtWidgets is not None:
             self.field_points.setRange(2, 1000000)
             self.field_points.setValue(1001)
 
-            self.param_inputs: Dict[str, QtWidgets.QDoubleSpinBox] = {}
+            self.param_inputs: Dict[str, QDoubleSpinBox] = {}
             self.param_group = self._build_parameter_controls()
 
             self.plot_type_combo = QtWidgets.QComboBox()
@@ -292,7 +301,7 @@ if QtWidgets is not None:
             self.plot_type_combo.addItem("Response magnitude", "response_mag")
             self.plot_type_combo.addItem("Response phase (rad)", "response_phase")
 
-            self.model_checks: Dict[type[BaseFMRModel], QtWidgets.QCheckBox] = {}
+            self.model_checks: Dict[ModelClass, QCheckBox] = {}
             self.model_group = self._build_model_controls()
 
             self.update_button = QtWidgets.QPushButton("Update plot")
@@ -466,12 +475,24 @@ if QtWidgets is not None:
 
 def launch_ui():
     if QtWidgets is None or pg is None:
-        raise RuntimeError("PyQt5 and pyqtgraph are required to launch the UI.")
+        raise RuntimeError("PySide6 and pyqtgraph are required to launch the UI.")
     app = QtWidgets.QApplication([])
+    app.setStyle("Fusion")
+    palette = QtGui.QPalette()
+    palette.setColor(QtGui.QPalette.Window, QtCore.Qt.white)
+    palette.setColor(QtGui.QPalette.WindowText, QtCore.Qt.black)
+    palette.setColor(QtGui.QPalette.Base, QtCore.Qt.white)
+    palette.setColor(QtGui.QPalette.AlternateBase, QtCore.Qt.white)
+    palette.setColor(QtGui.QPalette.Text, QtCore.Qt.black)
+    palette.setColor(QtGui.QPalette.Button, QtCore.Qt.white)
+    palette.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.black)
+    palette.setColor(QtGui.QPalette.Highlight, QtCore.Qt.lightGray)
+    palette.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+    app.setPalette(palette)
     window = FMRModelWindow()
     window.resize(1400, 900)
     window.show()
-    app.exec_()
+    app.exec()
 
 
 if __name__ == "__main__":
