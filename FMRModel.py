@@ -304,18 +304,18 @@ if QtWidgets is not None:
             self.legend = None
 
             self.field_start = QtWidgets.QDoubleSpinBox()
-            self.field_start.setRange(-1e6, 1e6)
-            self.field_start.setDecimals(6)
-            self.field_start.setValue(0.0)
+            self.field_start.setRange(0, 1e6)
+            self.field_start.setDecimals(2)
+            self.field_start.setValue(0.5)
 
             self.field_stop = QtWidgets.QDoubleSpinBox()
             self.field_stop.setRange(-1e6, 1e6)
             self.field_stop.setDecimals(6)
-            self.field_stop.setValue(10.0)
+            self.field_stop.setValue(20.0)
 
             self.field_points = QtWidgets.QSpinBox()
             self.field_points.setRange(2, 1000000)
-            self.field_points.setValue(1001)
+            self.field_points.setValue(2001)
 
             self.param_inputs: Dict[str, QDoubleSpinBox] = {}
             self.param_group = self._build_parameter_controls()
