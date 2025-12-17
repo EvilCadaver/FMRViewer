@@ -331,6 +331,7 @@ if QtWidgets is not None:
             self.plot_type_combo.addItem("Response phase (rad)", "response_phase")
             self.log_scale_checkbox = QtWidgets.QCheckBox("Log10 scale")
             self.log_scale_checkbox.setChecked(True)
+            self.derivative_checkbox = QtWidgets.QCheckBox("dP/dH")
 
             self.model_checks: Dict[ModelClass, QCheckBox] = {}
             self.kittel_power_combo = None
@@ -388,6 +389,7 @@ if QtWidgets is not None:
             layout = QtWidgets.QFormLayout()
             layout.addRow("Plot type", self.plot_type_combo)
             layout.addRow(self.log_scale_checkbox)
+            layout.addRow(self.derivative_checkbox)
             group.setLayout(layout)
             return group
 
@@ -461,6 +463,8 @@ if QtWidgets is not None:
 
             plot_mode = self.plot_type_combo.currentData()
             y_label = self._label_for_mode(plot_mode)
+            if self.derivative_checkbox.isChecked() and plot_mode == "absorbed_power":
+                y_label = "dP/dH"
             if self.log_scale_checkbox.isChecked():
                 y_label = f"log10({y_label})"
             self.plot_widget.setLabel("bottom", "Field (kOe)")
@@ -490,6 +494,8 @@ if QtWidgets is not None:
                     continue
 
                 y_values = self._series_from_output(plot_mode, output)
+                if self.derivative_checkbox.isChecked() and plot_mode == "absorbed_power":
+                    y_values = self._apply_derivative(field, y_values)
                 if self.log_scale_checkbox.isChecked():
                     y_values = self._apply_log10(y_values)
                 pen = pg.mkPen(color=colors[idx % len(colors)], width=2)
@@ -532,6 +538,14 @@ if QtWidgets is not None:
             safe = np.abs(values)
             safe = np.where(safe <= 0, np.finfo(float).tiny, safe)
             return np.log10(safe)
+
+        @staticmethod
+        def _apply_derivative(x_values: np.ndarray, y_values: np.ndarray) -> np.ndarray:
+            x = np.asarray(x_values, dtype=float)
+            y = np.asarray(y_values, dtype=float)
+            if x.size < 2:
+                return np.zeros_like(y)
+            return np.gradient(y, x)
 
 
 def launch_ui():
