@@ -74,31 +74,34 @@ class ParameterSpec:
 
 
 DEFAULT_PARAMETER_SPECS: Sequence[ParameterSpec] = (
-    ParameterSpec("Js", "Saturation polarization", 21.46, "kG", "Saturation polarization"),
+    ParameterSpec("Js", "Saturation polarization", 21460.0, "Oe", "Saturation polarization"),
     ParameterSpec("g", "Gyromagnetic factor", 2.088, "", "Dimensionless g-factor"),
     ParameterSpec("alpha", "Damping", 1.35e-3, "", "Dimensionless damping"),
     ParameterSpec("rho", "Resistivity", 9.7, "uOhm*cm", "Electrical resistivity"),
     ParameterSpec("f", "Frequency", 70.0, "GHz", "Microwave frequency"),
-    ParameterSpec("gamma", "Gamma", 1.399611, "GHz/kOe", "User-supplied constant"),
+    ParameterSpec("gamma", "Gamma", 0.001399611, "GHz/Oe", "User-supplied constant"),
+    ParameterSpec("field_power", "Field power", 2.0, "", "Exponent applied to H"),
 )
 
 
 @dataclass(frozen=True)
 class ModelParameters:
-    Js: float = 21.46
+    Js: float = 21460.0
     g: float = 2.088
     alpha: float = 1.35e-3
     rho: float = 9.7
     f: float = 70.0
-    gamma: float = 1.399611
+    gamma: float = 0.001399611
+    field_power: float = 2.0
     units: Dict[str, str] = field(
         default_factory=lambda: {
-            "Js": "kG",
+            "Js": "Oe",
             "g": "",
             "alpha": "",
             "rho": "uOhm*cm",
             "f": "GHz",
-            "gamma": "GHz/kOe",
+            "gamma": "GHz/Oe",
+            "field_power": "",
         }
     )
     unit_system: str = "cgs"
@@ -111,6 +114,7 @@ class ModelParameters:
             "rho": self.rho,
             "f": self.f,
             "gamma": self.gamma,
+            "field_power": self.field_power,
         }
 
     def with_overrides(self, overrides: Optional[Mapping[str, float]] = None) -> "ModelParameters":
@@ -127,16 +131,17 @@ def parameter_specs() -> Sequence[ParameterSpec]:
 
 def cgs_to_si_parameters(params: ModelParameters) -> ModelParameters:
     # Optional helper: convert to SI if needed for specific equations.
-    # Js: kG -> T (1 kG = 0.1 T)
+        # Js: Oe -> T (1 Oe = 1e-4 T)
     # rho: uOhm*cm -> ohm*m (1 uOhm*cm = 1e-8 ohm*m)
     # f: GHz -> Hz
     return ModelParameters(
-        Js=params.Js * 0.1,
+        Js=params.Js * 1e-4,
         g=params.g,
         alpha=params.alpha,
         rho=params.rho * 1e-8,
         f=params.f * 1e9,
         gamma=params.gamma,
+        field_power=params.field_power,
         units={
             "Js": "T",
             "g": "",
@@ -144,6 +149,7 @@ def cgs_to_si_parameters(params: ModelParameters) -> ModelParameters:
             "rho": "ohm*m",
             "f": "Hz",
             "gamma": params.units.get("gamma", ""),
+            "field_power": "",
         },
         unit_system="si",
     )
@@ -218,7 +224,8 @@ class ModelOne(BaseFMRModel):
 
     def compute_absorbed_power(
         self, response: ComplexArray, model_input: ModelInput) -> np.ndarray:
-        return np.imag(response) * (model_input.field**2)
+        field_power = model_input.parameters.field_power
+        return np.imag(response) * (model_input.field**field_power)
 
 
 class ModelTwo(BaseFMRModel):
@@ -252,13 +259,15 @@ class ModelTwo(BaseFMRModel):
     def compute_absorbed_power(self, response: ComplexArray, model_input: ModelInput) -> np.ndarray:
         mu_r, mu_l = self._mu_components(response)
         mu_power = self._select_mu_for_power(mu_r, mu_l)
-        return np.sqrt(model_input.parameters.rho * mu_power) * (model_input.field**2)
+        field_power = model_input.parameters.field_power
+        return np.sqrt(model_input.parameters.rho * mu_power) * (model_input.field**field_power)
 
     def evaluate(self, model_input: ModelInput) -> ModelOutput:
         response = _as_complex_array(self.compute_complex_response(model_input))
         mu_r, mu_l = self._mu_components(response)
         mu_power = self._select_mu_for_power(mu_r, mu_l)
-        absorbed = np.sqrt(model_input.parameters.rho * mu_power) * (model_input.field**2)
+        field_power = model_input.parameters.field_power
+        absorbed = np.sqrt(model_input.parameters.rho * mu_power) * (model_input.field**field_power)
         absorbed, _ = _broadcast_pair(absorbed, model_input.field)
         extra = {"mu_R": mu_r, "mu_L": mu_l}
         return ModelOutput(response=response, absorbed_power=absorbed, extra=extra)
@@ -278,7 +287,8 @@ class ModelThree(BaseFMRModel):
         return (1.0 + 1j) * np.sqrt(mu_eff)
 
     def compute_absorbed_power(self, response: ComplexArray, model_input: ModelInput) -> np.ndarray:
-        return np.real(response) * (model_input.field**2)
+        field_power = model_input.parameters.field_power
+        return np.real(response) * (model_input.field**field_power)
 
 
 def compare_models(
@@ -302,19 +312,19 @@ if QtWidgets is not None:
 
             self.plot_widget = pg.PlotWidget(background="w")
             self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-            self.plot_widget.setLabel("bottom", "Field (kOe)")
+            self.plot_widget.setLabel("bottom", "Field (Oe)")
             self.plot_widget.setLabel("left", "Value")
             self.legend = None
 
             self.field_start = QtWidgets.QDoubleSpinBox()
             self.field_start.setRange(0, 1e6)
             self.field_start.setDecimals(2)
-            self.field_start.setValue(0.5)
+            self.field_start.setValue(500.0)
 
             self.field_stop = QtWidgets.QDoubleSpinBox()
             self.field_stop.setRange(-1e6, 1e6)
             self.field_stop.setDecimals(6)
-            self.field_stop.setValue(20.0)
+            self.field_stop.setValue(20000.0)
 
             self.field_points = QtWidgets.QSpinBox()
             self.field_points.setRange(2, 1000000)
@@ -363,8 +373,8 @@ if QtWidgets is not None:
         def _build_field_controls(self):
             group = QtWidgets.QGroupBox("Field sweep")
             layout = QtWidgets.QFormLayout()
-            layout.addRow("Start (kOe)", self.field_start)
-            layout.addRow("Stop (kOe)", self.field_stop)
+            layout.addRow("Start (Oe)", self.field_start)
+            layout.addRow("Stop (Oe)", self.field_stop)
             layout.addRow("Points", self.field_points)
             group.setLayout(layout)
             return group
@@ -375,7 +385,10 @@ if QtWidgets is not None:
             layout.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
             for spec in parameter_specs():
                 spin = QtWidgets.QDoubleSpinBox()
-                spin.setRange(-1e12, 1e12)
+                if spec.key == "field_power":
+                    spin.setRange(-10.0, 10.0)
+                else:
+                    spin.setRange(-1e12, 1e12)
                 spin.setDecimals(6)
                 spin.setSingleStep(self._parameter_step(spec.default))
                 spin.setValue(spec.default)
@@ -463,11 +476,11 @@ if QtWidgets is not None:
 
             plot_mode = self.plot_type_combo.currentData()
             y_label = self._label_for_mode(plot_mode)
-            if self.derivative_checkbox.isChecked() and plot_mode == "absorbed_power":
+            if plot_mode == "absorbed_power" and self.derivative_checkbox.isChecked():
                 y_label = "dP/dH"
             if self.log_scale_checkbox.isChecked():
                 y_label = f"log10({y_label})"
-            self.plot_widget.setLabel("bottom", "Field (kOe)")
+            self.plot_widget.setLabel("bottom", "Field (Oe)")
             self.plot_widget.setLabel("left", y_label)
 
             errors = []
@@ -546,6 +559,7 @@ if QtWidgets is not None:
             if x.size < 2:
                 return np.zeros_like(y)
             return np.gradient(y, x)
+
 
 
 def launch_ui():
