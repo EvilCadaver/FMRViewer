@@ -327,6 +327,7 @@ if QtWidgets is not None:
             self.plot_type_combo.addItem("Response magnitude", "response_mag")
             self.plot_type_combo.addItem("Response phase (rad)", "response_phase")
             self.log_scale_checkbox = QtWidgets.QCheckBox("Log10 scale")
+            self.log_scale_checkbox.setChecked(True)
 
             self.model_checks: Dict[ModelClass, QCheckBox] = {}
             self.kittel_power_combo = None
