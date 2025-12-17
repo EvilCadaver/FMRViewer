@@ -212,43 +212,53 @@ class ModelOne(BaseFMRModel):
         ms = params.Js / (4.0 * np.pi)
         b_field = h_field + 4.0 * np.pi * ms
         omg = params.f / (params.gamma * params.g)
-        numerator = ms * (b_field + 1j * params.alpha * omg)
-        denominator = (omg**2) - (h_field + 1j * params.alpha * omg) * (b_field + 1j * params.alpha * omg)
+        numerator = -ms * (b_field - 1j * params.alpha * omg)
+        denominator = (omg**2) - (h_field - 1j * params.alpha * omg) * (b_field - 1j * params.alpha * omg)
         return numerator / denominator
 
     def compute_absorbed_power(
-        self, response: ComplexArray, model_input: ModelInput
-    ) -> np.ndarray:
+        self, response: ComplexArray, model_input: ModelInput) -> np.ndarray:
         return np.imag(response) * (model_input.field**2)
 
 
 class ModelTwo(BaseFMRModel):
     name = "kittel"
 
+    def __init__(self, parameters: Optional[ModelParameters] = None, power_mode: str = "mu_r"):
+        super().__init__(parameters)
+        self.power_mode = power_mode
+
     def compute_complex_response(self, model_input: ModelInput) -> ComplexArray:
         params = model_input.parameters
         h_field = model_input.field
         b_field = h_field + params.Js
         omg = params.f / (params.gamma * params.g)
-        numerator = (omg**2) - (b_field + 1j * params.alpha * omg) ** 2
-        denominator = (omg**2) - (h_field + 1j * params.alpha * omg) * (b_field + 1j * params.alpha * omg)
+        numerator = (omg**2) - (b_field - 1j * params.alpha * omg) ** 2
+        denominator = (omg**2) - (h_field - 1j * params.alpha * omg) * (b_field - 1j * params.alpha * omg)
         return numerator / denominator
 
-    def compute_absorbed_power(self, response: ComplexArray, model_input: ModelInput) -> np.ndarray:
-        real = np.real(response)
-        imag = np.imag(response)
-        magnitude = np.sqrt(real**2 + imag**2)
-        mu_r = magnitude + imag
-        return np.sqrt(model_input.parameters.rho * mu_r) * (model_input.field**2)
-
-    def evaluate(self, model_input: ModelInput) -> ModelOutput:
-        response = _as_complex_array(self.compute_complex_response(model_input))
+    @staticmethod
+    def _mu_components(response: ComplexArray) -> tuple[np.ndarray, np.ndarray]:
         real = np.real(response)
         imag = np.imag(response)
         magnitude = np.sqrt(real**2 + imag**2)
         mu_r = magnitude + imag
         mu_l = magnitude - imag
-        absorbed = np.sqrt(model_input.parameters.rho * mu_r) * (model_input.field**2)
+        return mu_r, mu_l
+
+    def _select_mu_for_power(self, mu_r: np.ndarray, mu_l: np.ndarray) -> np.ndarray:
+        return mu_l if self.power_mode == "mu_l" else mu_r
+
+    def compute_absorbed_power(self, response: ComplexArray, model_input: ModelInput) -> np.ndarray:
+        mu_r, mu_l = self._mu_components(response)
+        mu_power = self._select_mu_for_power(mu_r, mu_l)
+        return np.sqrt(model_input.parameters.rho * mu_power) * (model_input.field**2)
+
+    def evaluate(self, model_input: ModelInput) -> ModelOutput:
+        response = _as_complex_array(self.compute_complex_response(model_input))
+        mu_r, mu_l = self._mu_components(response)
+        mu_power = self._select_mu_for_power(mu_r, mu_l)
+        absorbed = np.sqrt(model_input.parameters.rho * mu_power) * (model_input.field**2)
         absorbed, _ = _broadcast_pair(absorbed, model_input.field)
         extra = {"mu_R": mu_r, "mu_L": mu_l}
         return ModelOutput(response=response, absorbed_power=absorbed, extra=extra)
@@ -319,6 +329,7 @@ if QtWidgets is not None:
             self.log_scale_checkbox = QtWidgets.QCheckBox("Log10 scale")
 
             self.model_checks: Dict[ModelClass, QCheckBox] = {}
+            self.kittel_power_combo = None
             self.model_group = self._build_model_controls()
 
             self.update_button = QtWidgets.QPushButton("Update plot")
@@ -383,7 +394,19 @@ if QtWidgets is not None:
                 label = model_cls.name.replace("_", " ").title()
                 checkbox = QtWidgets.QCheckBox(label)
                 checkbox.setChecked(True)
-                layout.addWidget(checkbox)
+                if model_cls is ModelTwo:
+                    row = QtWidgets.QHBoxLayout()
+                    row.addWidget(checkbox)
+                    row.addStretch()
+                    combo = QtWidgets.QComboBox()
+                    combo.addItem("mu_R", "mu_r")
+                    combo.addItem("mu_L", "mu_l")
+                    combo.setToolTip("Absorbed power uses selected mu")
+                    row.addWidget(combo)
+                    layout.addLayout(row)
+                    self.kittel_power_combo = combo
+                else:
+                    layout.addWidget(checkbox)
                 self.model_checks[model_cls] = checkbox
             layout.addStretch()
             group.setLayout(layout)
@@ -446,7 +469,13 @@ if QtWidgets is not None:
                 (60, 170, 140),
             ]
             for idx, model_cls in enumerate(selected):
-                model = model_cls(parameters=params)
+                if model_cls is ModelTwo:
+                    power_mode = "mu_r"
+                    if self.kittel_power_combo is not None:
+                        power_mode = self.kittel_power_combo.currentData() or "mu_r"
+                    model = model_cls(parameters=params, power_mode=power_mode)
+                else:
+                    model = model_cls(parameters=params)
                 try:
                     output = model.evaluate(model_input)
                 except NotImplementedError as exc:
