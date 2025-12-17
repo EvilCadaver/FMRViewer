@@ -265,17 +265,20 @@ class ModelTwo(BaseFMRModel):
 
 
 class ModelThree(BaseFMRModel):
-    name = "model_three"
+    name = "surface_impedance"
 
     def compute_complex_response(self, model_input: ModelInput) -> ComplexArray:
-        # TODO: implement the complex response for model three.
-        raise NotImplementedError("Fill in model three response.")
+        params = model_input.parameters
+        h_field = model_input.field
+        b_field = h_field + params.Js
+        omg = params.f / (params.gamma * params.g)
+        numerator = (omg**2) - (b_field + 1j * params.alpha * omg) ** 2
+        denominator = (omg**2) - (h_field + 1j * params.alpha * omg) * (b_field + 1j * params.alpha * omg)
+        mu_eff = numerator / denominator
+        return (1.0 + 1j) * np.sqrt(mu_eff)
 
-    def compute_absorbed_power(
-        self, response: ComplexArray, model_input: ModelInput
-    ) -> np.ndarray:
-        # TODO: implement the absorbed power for model three.
-        raise NotImplementedError("Fill in model three absorbed power.")
+    def compute_absorbed_power(self, response: ComplexArray, model_input: ModelInput) -> np.ndarray:
+        return np.real(response) * (model_input.field**2)
 
 
 def compare_models(
