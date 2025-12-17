@@ -212,10 +212,8 @@ class ModelOne(BaseFMRModel):
         ms = params.Js / (4.0 * np.pi)
         b_field = h_field + 4.0 * np.pi * ms
         omg = params.f / (params.gamma * params.g)
-        numerator = -ms * (b_field + 1j * params.alpha * omg)
-        denominator = (omg**2) - (h_field + 1j * params.alpha * omg) * (
-            b_field + 1j * params.alpha * omg
-        )
+        numerator = ms * (b_field + 1j * params.alpha * omg)
+        denominator = (omg**2) - (h_field + 1j * params.alpha * omg) * (b_field + 1j * params.alpha * omg)
         return numerator / denominator
 
     def compute_absorbed_power(
@@ -225,17 +223,35 @@ class ModelOne(BaseFMRModel):
 
 
 class ModelTwo(BaseFMRModel):
-    name = "model_two"
+    name = "kittel"
 
     def compute_complex_response(self, model_input: ModelInput) -> ComplexArray:
-        # TODO: implement the complex response for model two.
-        raise NotImplementedError("Fill in model two response.")
+        params = model_input.parameters
+        h_field = model_input.field
+        b_field = h_field + params.Js
+        omg = params.f / (params.gamma * params.g)
+        numerator = (omg**2) - (b_field + 1j * params.alpha * omg) ** 2
+        denominator = (omg**2) - (h_field + 1j * params.alpha * omg) * (b_field + 1j * params.alpha * omg)
+        return numerator / denominator
 
-    def compute_absorbed_power(
-        self, response: ComplexArray, model_input: ModelInput
-    ) -> np.ndarray:
-        # TODO: implement the absorbed power for model two.
-        raise NotImplementedError("Fill in model two absorbed power.")
+    def compute_absorbed_power(self, response: ComplexArray, model_input: ModelInput) -> np.ndarray:
+        real = np.real(response)
+        imag = np.imag(response)
+        magnitude = np.sqrt(real**2 + imag**2)
+        mu_r = magnitude + imag
+        return np.sqrt(model_input.parameters.rho * mu_r) * (model_input.field**2)
+
+    def evaluate(self, model_input: ModelInput) -> ModelOutput:
+        response = _as_complex_array(self.compute_complex_response(model_input))
+        real = np.real(response)
+        imag = np.imag(response)
+        magnitude = np.sqrt(real**2 + imag**2)
+        mu_r = magnitude + imag
+        mu_l = magnitude - imag
+        absorbed = np.sqrt(model_input.parameters.rho * mu_r) * (model_input.field**2)
+        absorbed, _ = _broadcast_pair(absorbed, model_input.field)
+        extra = {"mu_R": mu_r, "mu_L": mu_l}
+        return ModelOutput(response=response, absorbed_power=absorbed, extra=extra)
 
 
 class ModelThree(BaseFMRModel):
@@ -300,6 +316,7 @@ if QtWidgets is not None:
             self.plot_type_combo.addItem("Response imag", "response_imag")
             self.plot_type_combo.addItem("Response magnitude", "response_mag")
             self.plot_type_combo.addItem("Response phase (rad)", "response_phase")
+            self.log_scale_checkbox = QtWidgets.QCheckBox("Log10 scale")
 
             self.model_checks: Dict[ModelClass, QCheckBox] = {}
             self.model_group = self._build_model_controls()
@@ -355,6 +372,7 @@ if QtWidgets is not None:
             group = QtWidgets.QGroupBox("Plot")
             layout = QtWidgets.QFormLayout()
             layout.addRow("Plot type", self.plot_type_combo)
+            layout.addRow(self.log_scale_checkbox)
             group.setLayout(layout)
             return group
 
@@ -416,6 +434,8 @@ if QtWidgets is not None:
 
             plot_mode = self.plot_type_combo.currentData()
             y_label = self._label_for_mode(plot_mode)
+            if self.log_scale_checkbox.isChecked():
+                y_label = f"log10({y_label})"
             self.plot_widget.setLabel("bottom", "Field (kOe)")
             self.plot_widget.setLabel("left", y_label)
 
@@ -437,6 +457,8 @@ if QtWidgets is not None:
                     continue
 
                 y_values = self._series_from_output(plot_mode, output)
+                if self.log_scale_checkbox.isChecked():
+                    y_values = self._apply_log10(y_values)
                 pen = pg.mkPen(color=colors[idx % len(colors)], width=2)
                 label = model_cls.name.replace("_", " ").title()
                 self.plot_widget.plot(field, y_values, pen=pen, name=label)
@@ -471,6 +493,12 @@ if QtWidgets is not None:
                 "response_phase": "Response phase (rad)",
             }
             return labels.get(mode, "Value")
+
+        @staticmethod
+        def _apply_log10(values: np.ndarray) -> np.ndarray:
+            safe = np.abs(values)
+            safe = np.where(safe <= 0, np.finfo(float).tiny, safe)
+            return np.log10(safe)
 
 
 def launch_ui():
