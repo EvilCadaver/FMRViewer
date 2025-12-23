@@ -78,6 +78,13 @@ DEFAULT_PARAMETER_SPECS: Sequence[ParameterSpec] = (
     ParameterSpec("g", "Gyromagnetic factor", 2.088, "", "Dimensionless g-factor"),
     ParameterSpec("alpha", "Damping", 1.35e-3, "", "Dimensionless damping"),
     ParameterSpec("rho", "Resistivity", 9.7, "uOhm*cm", "Electrical resistivity"),
+    ParameterSpec(
+        "Hk",
+        "Anisotropy field",
+        0.0,
+        "kOe",
+        "Uniaxial anisotropy field along the bias field (easy axis aligned with H)",
+    ),
     ParameterSpec("f", "Frequency", 70.0, "GHz", "Microwave frequency"),
     ParameterSpec("gamma", "Gamma", 1.399611, "GHz/kOe", "User-supplied constant"),
     ParameterSpec("field_power", "Field power", 2.0, "", "Exponent applied to H"),
@@ -90,6 +97,7 @@ class ModelParameters:
     g: float = 2.088
     alpha: float = 1.35e-3
     rho: float = 9.7
+    Hk: float = 0.0
     f: float = 70.0
     gamma: float = 1.399611
     field_power: float = 2.0
@@ -99,6 +107,7 @@ class ModelParameters:
             "g": "",
             "alpha": "",
             "rho": "uOhm*cm",
+            "Hk": "kOe",
             "f": "GHz",
             "gamma": "GHz/kOe",
             "field_power": "",
@@ -112,6 +121,7 @@ class ModelParameters:
             "g": self.g,
             "alpha": self.alpha,
             "rho": self.rho,
+            "Hk": self.Hk,
             "f": self.f,
             "gamma": self.gamma,
             "field_power": self.field_power,
@@ -139,6 +149,7 @@ def cgs_to_si_parameters(params: ModelParameters) -> ModelParameters:
         g=params.g,
         alpha=params.alpha,
         rho=params.rho * 1e-8,
+        Hk=params.Hk,
         f=params.f * 1e9,
         gamma=params.gamma,
         field_power=params.field_power,
@@ -147,6 +158,7 @@ def cgs_to_si_parameters(params: ModelParameters) -> ModelParameters:
             "g": "",
             "alpha": "",
             "rho": "ohm*m",
+            "Hk": params.units.get("Hk", ""),
             "f": "Hz",
             "gamma": params.units.get("gamma", ""),
             "field_power": "",
@@ -277,14 +289,35 @@ class ModelThree(BaseFMRModel):
     name = "surface_impedance"
 
     def compute_complex_response(self, model_input: ModelInput) -> ComplexArray:
+        """
+        Surface-impedance model for FMR absorption in a good conductor.
+
+        Uses a complex effective permeability (easy axis aligned with bias field):
+          H_eff = H + Hk
+          B_eff = H_eff + Js
+
+        Surface impedance (thick limit) in SI:
+          Zs = (1 + i) * sqrt( ω μ0 μ_eff ρ / 2 )
+
+        Here μ_eff is treated as a relative permeability (dimensionless), and ρ is
+        electrical resistivity. Absorbed power is taken proportional to Re(Zs).
+        """
         params = model_input.parameters
         h_field = model_input.field
-        b_field = h_field + params.Js
-        omg = params.f / (params.gamma * params.g)
-        numerator = (omg**2) - (b_field + 1j * params.alpha * omg) ** 2
-        denominator = (omg**2) - (h_field + 1j * params.alpha * omg) * (b_field + 1j * params.alpha * omg)
+        frequency_ghz = model_input.frequency
+
+        h_eff = h_field + params.Hk
+        b_eff = h_eff + params.Js
+        omg = frequency_ghz / (params.gamma * params.g)
+        numerator = (omg**2) - (b_eff + 1j * params.alpha * omg) ** 2
+        denominator = (omg**2) - (h_eff + 1j * params.alpha * omg) * (b_eff + 1j * params.alpha * omg)
         mu_eff = numerator / denominator
-        return (1.0 + 1j) * np.sqrt(mu_eff)
+
+        mu0 = 4.0e-7 * np.pi  # H/m
+        rho_ohm_m = params.rho * 1e-8  # uOhm*cm -> ohm*m
+        omega = 2.0 * np.pi * (frequency_ghz * 1e9)
+        zs = (1.0 + 1j) * np.sqrt(omega * mu0 * mu_eff * rho_ohm_m / 2.0)
+        return zs
 
     def compute_absorbed_power(self, response: ComplexArray, model_input: ModelInput) -> np.ndarray:
         field_power = model_input.parameters.field_power
