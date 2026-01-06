@@ -42,43 +42,6 @@ def _broadcast_pair(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarra
     return np.broadcast_to(a, shape).astype(float, copy=False), np.broadcast_to(b, shape).astype(float, copy=False)
 
 
-def _mu_eff_surface_impedance(field_koe: ArrayLike, frequency_ghz: float, params: "ModelParameters") -> ComplexArray:
-    field = _as_float_array(field_koe)
-    frequency = _as_float_array(frequency_ghz)
-    field, frequency = _broadcast_pair(field, frequency)
-    h_eff = field + params.Hk
-    b_eff = h_eff + params.Js
-    omg = frequency / (params.gamma * params.g)
-    numerator = (omg**2) - (b_eff + 1j * params.alpha * omg) ** 2
-    denominator = (omg**2) - (h_eff + 1j * params.alpha * omg) * (b_eff + 1j * params.alpha * omg)
-    return numerator / denominator
-
-
-def _broaden_mu_eff_lognormal(field_koe: ArrayLike, frequency_ghz: float, params: "ModelParameters") -> ComplexArray:
-    """
-    Log-normal ("s-space Gaussian") broadening:
-
-        mu_eff_broad(H) = ∫ mu_eff(exp(s) * H) * N(s; 0, sigma_s^2) ds
-
-    computed via Gauss-Hermite quadrature on s = sqrt(2) * sigma_s * t.
-    """
-    sigma_s = float(getattr(params, "sigma_s", 0.0))
-    if sigma_s <= 0.0:
-        return _mu_eff_surface_impedance(field_koe, frequency_ghz, params)
-
-    n = int(round(float(getattr(params, "broadening_n", 31.0))))
-    n = max(n, 3)
-    t, w = np.polynomial.hermite.hermgauss(n)  # ∫ exp(-t^2) f(t) dt ≈ Σ w_i f(t_i)
-    scale = np.exp(np.sqrt(2.0) * sigma_s * t)  # exp(s)
-
-    field = _as_float_array(field_koe)
-    scale_nd = scale.reshape((scale.size,) + (1,) * field.ndim)
-    scaled_fields = scale_nd * field
-    mu = _mu_eff_surface_impedance(scaled_fields, frequency_ghz, params)
-    w_nd = w.reshape((w.size,) + (1,) * field.ndim)
-    return (w_nd * mu).sum(axis=0) / np.sqrt(np.pi)
-
-
 def complex_from_components(real: ArrayLike, imag: ArrayLike) -> ComplexArray:
     real_arr = _as_float_array(real)
     imag_arr = _as_float_array(imag)
@@ -337,6 +300,44 @@ class ModelTwo(BaseFMRModel):
 class ModelThree(BaseFMRModel):
     name = "surface_impedance"
 
+    @staticmethod
+    def _mu_eff(field_koe: ArrayLike, frequency_ghz: ArrayLike, params: ModelParameters) -> ComplexArray:
+        field = _as_float_array(field_koe)
+        frequency = _as_float_array(frequency_ghz)
+        field, frequency = _broadcast_pair(field, frequency)
+
+        h_eff = field + params.Hk
+        b_eff = h_eff + params.Js
+        omg = frequency / (params.gamma * params.g)
+        numerator = (omg**2) - (b_eff + 1j * params.alpha * omg) ** 2
+        denominator = (omg**2) - (h_eff + 1j * params.alpha * omg) * (b_eff + 1j * params.alpha * omg)
+        return numerator / denominator
+
+    @classmethod
+    def _broaden_mu_eff(cls, field_koe: ArrayLike, frequency_ghz: ArrayLike, params: ModelParameters) -> ComplexArray:
+        """
+        Log-normal ("s-space Gaussian") broadening:
+
+            mu_eff_broad(H) = ∫ mu_eff(exp(s) * H) * N(s; 0, sigma_s^2) ds
+
+        computed via Gauss-Hermite quadrature on s = sqrt(2) * sigma_s * t.
+        """
+        sigma_s = float(getattr(params, "sigma_s", 0.0))
+        if sigma_s <= 0.0:
+            return cls._mu_eff(field_koe, frequency_ghz, params)
+
+        n = int(round(float(getattr(params, "broadening_n", 31.0))))
+        n = max(n, 3)
+        t, w = np.polynomial.hermite.hermgauss(n)  # ∫ exp(-t^2) f(t) dt ≈ Σ w_i f(t_i)
+        scale = np.exp(np.sqrt(2.0) * sigma_s * t)  # exp(s)
+
+        field = _as_float_array(field_koe)
+        scale_nd = scale.reshape((scale.size,) + (1,) * field.ndim)
+        scaled_fields = scale_nd * field
+        mu = cls._mu_eff(scaled_fields, frequency_ghz, params)
+        w_nd = w.reshape((w.size,) + (1,) * field.ndim)
+        return (w_nd * mu).sum(axis=0) / np.sqrt(np.pi)
+
     def compute_complex_response(self, model_input: ModelInput) -> ComplexArray:
         """
         Surface-impedance model for FMR absorption in a good conductor.
@@ -355,7 +356,7 @@ class ModelThree(BaseFMRModel):
         h_field = model_input.field
         frequency_ghz = model_input.frequency
 
-        mu_eff = _broaden_mu_eff_lognormal(h_field, frequency_ghz, params)
+        mu_eff = self._broaden_mu_eff(h_field, frequency_ghz, params)
 
         mu0 = 4.0e-7 * np.pi  # H/m
         rho_ohm_m = params.rho * 1e-8  # uOhm*cm -> ohm*m
