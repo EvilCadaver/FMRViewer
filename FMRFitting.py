@@ -111,7 +111,7 @@ DEFAULT_PARAMETER_SPECS: Sequence[ParameterSpec] = (
 def launch_ui() -> None:
     import os
 
-    from PyQt5 import QtCore, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
     import pyqtgraph as pg
 
     class FMRFittingWindow(QtWidgets.QMainWindow):
@@ -445,10 +445,30 @@ def launch_ui() -> None:
 
     app = QtWidgets.QApplication([])
     app.setStyle("Fusion")
+
+    # Force a readable light theme (some platforms default Fusion to a dark palette).
+    light_palette = QtGui.QPalette()
+    light_palette.setColor(QtGui.QPalette.Window, QtGui.QColor(245, 245, 245))
+    light_palette.setColor(QtGui.QPalette.WindowText, QtGui.QColor(0, 0, 0))
+    light_palette.setColor(QtGui.QPalette.Base, QtGui.QColor(255, 255, 255))
+    light_palette.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(245, 245, 245))
+    light_palette.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(255, 255, 255))
+    light_palette.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor(0, 0, 0))
+    light_palette.setColor(QtGui.QPalette.Text, QtGui.QColor(0, 0, 0))
+    light_palette.setColor(QtGui.QPalette.Button, QtGui.QColor(245, 245, 245))
+    light_palette.setColor(QtGui.QPalette.ButtonText, QtGui.QColor(0, 0, 0))
+    light_palette.setColor(QtGui.QPalette.BrightText, QtGui.QColor(255, 0, 0))
+    light_palette.setColor(QtGui.QPalette.Link, QtGui.QColor(0, 102, 204))
+    light_palette.setColor(QtGui.QPalette.Highlight, QtGui.QColor(0, 120, 215))
+    light_palette.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor(255, 255, 255))
+    app.setPalette(light_palette)
+
+    pg.setConfigOption("background", "w")
+    pg.setConfigOption("foreground", "k")
     window = FMRFittingWindow()
     window.resize(1400, 900)
     window.show()
-    app.exec_()
+    app.exec()
 
 
 if __name__ == "__main__":
