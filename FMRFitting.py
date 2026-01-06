@@ -23,14 +23,7 @@ def _get_param(params: Any, key: str, default: float | None = None) -> float:
     return float(value)
 
 
-def surface_impedance_response(field_koe: ArrayLike, frequency_ghz: float, params: Any) -> ComplexArray:
-    """
-    Surface impedance (thick limit) for a good conductor:
-
-        Zs = (1 + i) * sqrt( ω μ0 μ_eff ρ / 2 )
-
-    where μ_eff is treated as a relative (dimensionless) complex effective permeability.
-    """
+def _mu_eff_surface_impedance(field_koe: ArrayLike, frequency_ghz: float, params: Any) -> ComplexArray:
     field = _as_float_array(field_koe)
     h_eff = field + _get_param(params, "Hk", 0.0)
     b_eff = h_eff + _get_param(params, "Js")
@@ -42,7 +35,43 @@ def surface_impedance_response(field_koe: ArrayLike, frequency_ghz: float, param
 
     numerator = (omg**2) - (b_eff + 1j * alpha * omg) ** 2
     denominator = (omg**2) - (h_eff + 1j * alpha * omg) * (b_eff + 1j * alpha * omg)
-    mu_eff = numerator / denominator
+    return numerator / denominator
+
+
+def _broaden_mu_eff_lognormal(field_koe: ArrayLike, frequency_ghz: float, params: Any) -> ComplexArray:
+    """
+    Log-normal ("s-space Gaussian") broadening:
+
+        mu_eff_broad(H) = ∫ mu_eff(exp(s) * H) * N(s; 0, sigma_s^2) ds
+
+    computed via Gauss-Hermite quadrature on s = sqrt(2) * sigma_s * t.
+    """
+    sigma_s = _get_param(params, "sigma_s", 0.0)
+    if sigma_s <= 0.0:
+        return _mu_eff_surface_impedance(field_koe, frequency_ghz, params)
+
+    n = int(round(_get_param(params, "broadening_n", 31.0)))
+    n = max(n, 3)
+    t, w = np.polynomial.hermite.hermgauss(n)  # ∫ exp(-t^2) f(t) dt ≈ Σ w_i f(t_i)
+    scale = np.exp(np.sqrt(2.0) * sigma_s * t)  # exp(s)
+
+    field = _as_float_array(field_koe)
+    scale_nd = scale.reshape((scale.size,) + (1,) * field.ndim)
+    scaled_fields = scale_nd * field
+    mu = _mu_eff_surface_impedance(scaled_fields, frequency_ghz, params)
+    w_nd = w.reshape((w.size,) + (1,) * field.ndim)
+    return (w_nd * mu).sum(axis=0) / np.sqrt(np.pi)
+
+
+def surface_impedance_response(field_koe: ArrayLike, frequency_ghz: float, params: Any) -> ComplexArray:
+    """
+    Surface impedance (thick limit) for a good conductor:
+
+        Zs = (1 + i) * sqrt( ω μ0 μ_eff ρ / 2 )
+
+    where μ_eff is treated as a relative (dimensionless) complex effective permeability.
+    """
+    mu_eff = _broaden_mu_eff_lognormal(field_koe, frequency_ghz, params)
 
     mu0 = 4.0e-7 * np.pi  # H/m
     rho_ohm_m = _get_param(params, "rho") * 1e-8  # uOhm*cm -> ohm*m
@@ -71,6 +100,8 @@ DEFAULT_PARAMETER_SPECS: Sequence[ParameterSpec] = (
     ParameterSpec("alpha", "Damping", 1.35e-3, ""),
     ParameterSpec("rho", "Resistivity", 9.7, "uOhm*cm"),
     ParameterSpec("Hk", "Anisotropy field", 0.0, "kOe"),
+    ParameterSpec("sigma_s", "Broadening sigma_s", 0.0, ""),
+    ParameterSpec("broadening_n", "Broadening points", 31.0, ""),
     ParameterSpec("f", "Frequency", 36.0, "GHz"),
     ParameterSpec("gamma", "Gamma", 1.399611, "GHz/kOe"),
     ParameterSpec("field_power", "Field power", 2.0, ""),

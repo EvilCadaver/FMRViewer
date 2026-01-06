@@ -42,6 +42,43 @@ def _broadcast_pair(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarra
     return np.broadcast_to(a, shape).astype(float, copy=False), np.broadcast_to(b, shape).astype(float, copy=False)
 
 
+def _mu_eff_surface_impedance(field_koe: ArrayLike, frequency_ghz: float, params: "ModelParameters") -> ComplexArray:
+    field = _as_float_array(field_koe)
+    frequency = _as_float_array(frequency_ghz)
+    field, frequency = _broadcast_pair(field, frequency)
+    h_eff = field + params.Hk
+    b_eff = h_eff + params.Js
+    omg = frequency / (params.gamma * params.g)
+    numerator = (omg**2) - (b_eff + 1j * params.alpha * omg) ** 2
+    denominator = (omg**2) - (h_eff + 1j * params.alpha * omg) * (b_eff + 1j * params.alpha * omg)
+    return numerator / denominator
+
+
+def _broaden_mu_eff_lognormal(field_koe: ArrayLike, frequency_ghz: float, params: "ModelParameters") -> ComplexArray:
+    """
+    Log-normal ("s-space Gaussian") broadening:
+
+        mu_eff_broad(H) = ∫ mu_eff(exp(s) * H) * N(s; 0, sigma_s^2) ds
+
+    computed via Gauss-Hermite quadrature on s = sqrt(2) * sigma_s * t.
+    """
+    sigma_s = float(getattr(params, "sigma_s", 0.0))
+    if sigma_s <= 0.0:
+        return _mu_eff_surface_impedance(field_koe, frequency_ghz, params)
+
+    n = int(round(float(getattr(params, "broadening_n", 31.0))))
+    n = max(n, 3)
+    t, w = np.polynomial.hermite.hermgauss(n)  # ∫ exp(-t^2) f(t) dt ≈ Σ w_i f(t_i)
+    scale = np.exp(np.sqrt(2.0) * sigma_s * t)  # exp(s)
+
+    field = _as_float_array(field_koe)
+    scale_nd = scale.reshape((scale.size,) + (1,) * field.ndim)
+    scaled_fields = scale_nd * field
+    mu = _mu_eff_surface_impedance(scaled_fields, frequency_ghz, params)
+    w_nd = w.reshape((w.size,) + (1,) * field.ndim)
+    return (w_nd * mu).sum(axis=0) / np.sqrt(np.pi)
+
+
 def complex_from_components(real: ArrayLike, imag: ArrayLike) -> ComplexArray:
     real_arr = _as_float_array(real)
     imag_arr = _as_float_array(imag)
@@ -85,6 +122,8 @@ DEFAULT_PARAMETER_SPECS: Sequence[ParameterSpec] = (
         "kOe",
         "Uniaxial anisotropy field along the bias field (easy axis aligned with H)",
     ),
+    ParameterSpec("sigma_s", "Broadening sigma_s", 0.0, "", "Gaussian broadening in ln(H) (sigma of s)"),
+    ParameterSpec("broadening_n", "Broadening points", 31.0, "", "Gauss-Hermite quadrature points"),
     ParameterSpec("f", "Frequency", 70.0, "GHz", "Microwave frequency"),
     ParameterSpec("gamma", "Gamma", 1.399611, "GHz/kOe", "User-supplied constant"),
     ParameterSpec("field_power", "Field power", 2.0, "", "Exponent applied to H"),
@@ -98,6 +137,8 @@ class ModelParameters:
     alpha: float = 1.35e-3
     rho: float = 9.7
     Hk: float = 0.0
+    sigma_s: float = 0.0
+    broadening_n: float = 31.0
     f: float = 70.0
     gamma: float = 1.399611
     field_power: float = 2.0
@@ -108,6 +149,8 @@ class ModelParameters:
             "alpha": "",
             "rho": "uOhm*cm",
             "Hk": "kOe",
+            "sigma_s": "",
+            "broadening_n": "",
             "f": "GHz",
             "gamma": "GHz/kOe",
             "field_power": "",
@@ -122,6 +165,8 @@ class ModelParameters:
             "alpha": self.alpha,
             "rho": self.rho,
             "Hk": self.Hk,
+            "sigma_s": self.sigma_s,
+            "broadening_n": self.broadening_n,
             "f": self.f,
             "gamma": self.gamma,
             "field_power": self.field_power,
@@ -150,6 +195,8 @@ def cgs_to_si_parameters(params: ModelParameters) -> ModelParameters:
         alpha=params.alpha,
         rho=params.rho * 1e-8,
         Hk=params.Hk,
+        sigma_s=params.sigma_s,
+        broadening_n=params.broadening_n,
         f=params.f * 1e9,
         gamma=params.gamma,
         field_power=params.field_power,
@@ -159,6 +206,8 @@ def cgs_to_si_parameters(params: ModelParameters) -> ModelParameters:
             "alpha": "",
             "rho": "ohm*m",
             "Hk": params.units.get("Hk", ""),
+            "sigma_s": "",
+            "broadening_n": "",
             "f": "Hz",
             "gamma": params.units.get("gamma", ""),
             "field_power": "",
@@ -306,12 +355,7 @@ class ModelThree(BaseFMRModel):
         h_field = model_input.field
         frequency_ghz = model_input.frequency
 
-        h_eff = h_field + params.Hk
-        b_eff = h_eff + params.Js
-        omg = frequency_ghz / (params.gamma * params.g)
-        numerator = (omg**2) - (b_eff + 1j * params.alpha * omg) ** 2
-        denominator = (omg**2) - (h_eff + 1j * params.alpha * omg) * (b_eff + 1j * params.alpha * omg)
-        mu_eff = numerator / denominator
+        mu_eff = _broaden_mu_eff_lognormal(h_field, frequency_ghz, params)
 
         mu0 = 4.0e-7 * np.pi  # H/m
         rho_ohm_m = params.rho * 1e-8  # uOhm*cm -> ohm*m
