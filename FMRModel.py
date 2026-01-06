@@ -236,15 +236,37 @@ class BaseFMRModel:
 class ModelOne(BaseFMRModel):
     name = "gurevich"
 
-    def compute_complex_response(self, model_input: ModelInput) -> ComplexArray:
-        params = model_input.parameters
-        h_field = model_input.field
+    @staticmethod
+    def _chi(field_koe: ArrayLike, params: ModelParameters) -> ComplexArray:
+        h_field = _as_float_array(field_koe)
         ms = params.Js / (4.0 * np.pi)
         b_field = h_field + 4.0 * np.pi * ms
         omg = params.f / (params.gamma * params.g)
         numerator = -ms * (b_field - 1j * params.alpha * omg)
         denominator = (omg**2) - (h_field - 1j * params.alpha * omg) * (b_field - 1j * params.alpha * omg)
         return numerator / denominator
+
+    @classmethod
+    def _broaden_chi(cls, field_koe: ArrayLike, params: ModelParameters) -> ComplexArray:
+        sigma_s = float(getattr(params, "sigma_s", 0.0))
+        if sigma_s <= 0.0:
+            return cls._chi(field_koe, params)
+
+        n = int(round(float(getattr(params, "broadening_n", 31.0))))
+        n = max(n, 3)
+        t, w = np.polynomial.hermite.hermgauss(n)
+        scale = np.exp(np.sqrt(2.0) * sigma_s * t)  # exp(s)
+
+        field = _as_float_array(field_koe)
+        scale_nd = scale.reshape((scale.size,) + (1,) * field.ndim)
+        scaled_fields = scale_nd * field
+        chi = cls._chi(scaled_fields, params)
+        w_nd = w.reshape((w.size,) + (1,) * field.ndim)
+        return (w_nd * chi).sum(axis=0) / np.sqrt(np.pi)
+
+    def compute_complex_response(self, model_input: ModelInput) -> ComplexArray:
+        params = model_input.parameters
+        return self._broaden_chi(model_input.field, params)
 
     def compute_absorbed_power(
         self, response: ComplexArray, model_input: ModelInput) -> np.ndarray:
@@ -259,14 +281,36 @@ class ModelTwo(BaseFMRModel):
         super().__init__(parameters)
         self.power_mode = power_mode
 
-    def compute_complex_response(self, model_input: ModelInput) -> ComplexArray:
-        params = model_input.parameters
-        h_field = model_input.field
+    @staticmethod
+    def _mu_eff(field_koe: ArrayLike, params: ModelParameters) -> ComplexArray:
+        h_field = _as_float_array(field_koe)
         b_field = h_field + params.Js
         omg = params.f / (params.gamma * params.g)
         numerator = (omg**2) - (b_field - 1j * params.alpha * omg) ** 2
         denominator = (omg**2) - (h_field - 1j * params.alpha * omg) * (b_field - 1j * params.alpha * omg)
         return numerator / denominator
+
+    @classmethod
+    def _broaden_mu_eff(cls, field_koe: ArrayLike, params: ModelParameters) -> ComplexArray:
+        sigma_s = float(getattr(params, "sigma_s", 0.0))
+        if sigma_s <= 0.0:
+            return cls._mu_eff(field_koe, params)
+
+        n = int(round(float(getattr(params, "broadening_n", 31.0))))
+        n = max(n, 3)
+        t, w = np.polynomial.hermite.hermgauss(n)
+        scale = np.exp(np.sqrt(2.0) * sigma_s * t)  # exp(s)
+
+        field = _as_float_array(field_koe)
+        scale_nd = scale.reshape((scale.size,) + (1,) * field.ndim)
+        scaled_fields = scale_nd * field
+        mu = cls._mu_eff(scaled_fields, params)
+        w_nd = w.reshape((w.size,) + (1,) * field.ndim)
+        return (w_nd * mu).sum(axis=0) / np.sqrt(np.pi)
+
+    def compute_complex_response(self, model_input: ModelInput) -> ComplexArray:
+        params = model_input.parameters
+        return self._broaden_mu_eff(model_input.field, params)
 
     @staticmethod
     def _mu_components(response: ComplexArray) -> tuple[np.ndarray, np.ndarray]:
