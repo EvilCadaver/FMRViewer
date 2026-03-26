@@ -97,7 +97,7 @@ def generate_curves(
 
 if QtWidgets is not None and pg is not None:
 
-    class TranscendentalWindow(QtWidgets.QMainWindow):
+    class MainWindow(QtWidgets.QMainWindow):
         def __init__(self) -> None:
             super().__init__()
             self.setWindowTitle("FMR Transcendental Theta(H)")
@@ -254,7 +254,7 @@ def launch_ui() -> None:
 
     app = QtWidgets.QApplication([])
     app.setStyle("Fusion")
-    window = TranscendentalWindow()
+    window = MainWindow()
     window.resize(1400, 900)
     window.show()
     app.exec()
