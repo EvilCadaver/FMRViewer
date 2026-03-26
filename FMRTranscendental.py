@@ -95,6 +95,65 @@ def generate_curves(
     return h_values, phi_values, curves
 
 
+def _generate_palette(count: int, palette_name: str) -> list[tuple[int, int, int]]:
+    """Generate `count` RGB colors from a named palette."""
+    if count <= 0:
+        return []
+    base_palettes: dict[str, np.ndarray] = {
+        # Approximate matplotlib viridis anchors.
+        "Viridis": np.asarray(
+            [
+                (68, 1, 84),
+                (71, 44, 122),
+                (59, 81, 139),
+                (44, 113, 142),
+                (33, 144, 141),
+                (39, 173, 129),
+                (92, 200, 99),
+                (170, 220, 50),
+                (253, 231, 37),
+            ],
+            dtype=float,
+        ),
+        # Approximate matplotlib magma anchors.
+        "Magma": np.asarray(
+            [
+                (0, 0, 4),
+                (28, 16, 68),
+                (79, 18, 123),
+                (129, 37, 129),
+                (181, 54, 122),
+                (229, 80, 100),
+                (251, 135, 97),
+                (254, 194, 135),
+                (252, 253, 191),
+            ],
+            dtype=float,
+        ),
+        # Cividis-like ramp (designed for color-vision accessibility).
+        "Colorblind-safe": np.asarray(
+            [
+                (0, 34, 78),
+                (30, 62, 109),
+                (59, 81, 120),
+                (87, 99, 121),
+                (115, 116, 117),
+                (144, 133, 108),
+                (175, 150, 96),
+                (208, 171, 84),
+                (244, 196, 77),
+            ],
+            dtype=float,
+        ),
+    }
+    anchors = base_palettes.get(palette_name, base_palettes["Viridis"])
+    src_x = np.linspace(0.0, 1.0, anchors.shape[0])
+    dst_x = np.linspace(0.0, 1.0, count)
+    channels = [np.interp(dst_x, src_x, anchors[:, idx]) for idx in range(3)]
+    rgb = np.stack(channels, axis=1)
+    return [tuple(int(np.clip(round(c), 0, 255)) for c in row) for row in rgb]
+
+
 if QtWidgets is not None and pg is not None:
 
     class MainWindow(QtWidgets.QMainWindow):
@@ -148,6 +207,10 @@ if QtWidgets is not None and pg is not None:
             self.phi_step.setDecimals(6)
             self.phi_step.setValue(10.0)
 
+            self.palette_choice = QtWidgets.QComboBox()
+            self.palette_choice.addItems(["Viridis", "Magma", "Colorblind-safe"])
+            self.palette_choice.setCurrentText("Viridis")
+
             self.update_button = QtWidgets.QPushButton("Update plot")
             self.update_button.clicked.connect(self.update_plot)
 
@@ -183,6 +246,7 @@ if QtWidgets is not None and pg is not None:
             phi_form.addRow("Start", self.phi_start)
             phi_form.addRow("Stop", self.phi_stop)
             phi_form.addRow("Step", self.phi_step)
+            phi_form.addRow("Palette", self.palette_choice)
             phi_group.setLayout(phi_form)
 
             panel_layout = QtWidgets.QVBoxLayout()
@@ -225,21 +289,10 @@ if QtWidgets is not None and pg is not None:
             self.plot_widget.clear()
             self.legend = self.plot_widget.addLegend()
 
-            palette = [
-                (220, 70, 70),
-                (60, 130, 220),
-                (60, 170, 140),
-                (220, 150, 60),
-                (140, 80, 220),
-                (0, 170, 200),
-                (200, 110, 110),
-                (110, 200, 110),
-                (210, 210, 80),
-                (110, 110, 210),
-            ]
+            palette = _generate_palette(phi_points, self.palette_choice.currentText())
 
             for idx, (phi_deg, theta_values) in enumerate(curves):
-                pen = pg.mkPen(color=palette[idx % len(palette)], width=2)
+                pen = pg.mkPen(color=palette[idx], width=2)
                 self.plot_widget.plot(h_values, theta_values, pen=pen, name=f"phi={phi_deg:g} deg")
 
             self.statusBar().showMessage(
