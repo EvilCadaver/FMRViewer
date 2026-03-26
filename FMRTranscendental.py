@@ -165,13 +165,13 @@ if QtWidgets is not None and pg is not None:
             self.update_plot()
 
         def _build_controls(self) -> QWidget:
-            params_group = QtWidgets.QGroupBox("Material")
+            params_group = QtWidgets.QGroupBox("Material properties")
             params_form = QtWidgets.QFormLayout()
             params_form.addRow("Hk (kOe)", self.hk_input)
             params_form.addRow("Ms (kG)", self.ms_input)
             params_group.setLayout(params_form)
 
-            h_group = QtWidgets.QGroupBox("H Sweep")
+            h_group = QtWidgets.QGroupBox("H Sweep in kOe")
             h_form = QtWidgets.QFormLayout()
             h_form.addRow("Start", self.h_start)
             h_form.addRow("Stop", self.h_stop)
