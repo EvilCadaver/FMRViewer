@@ -47,7 +47,7 @@ def _pick_sintheta(roots: np.ndarray, eps: float = 1e-7) -> float:
     candidates = [None if val > 1 else val for val in candidates]
     if not candidates:
         return float("nan")
-    return float(np.clip(min(candidates), -1.0, 1.0))
+    return float(min(candidates))
 
 
 def theta_from_h_phi(h_koe: float, phi_deg: float, hk_koe: float, ms_kgauss: float) -> float:
