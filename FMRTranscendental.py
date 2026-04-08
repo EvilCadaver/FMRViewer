@@ -55,15 +55,14 @@ def theta_from_h_phi(h_koe: float, phi_deg: float, hk_koe: float, ms_kgauss: flo
     phi = np.radians(phi_deg)
     a_term = hk_koe * np.sin(2.0 * phi)
     b_term = 4.0 * np.pi * ms_kgauss + hk_koe * np.cos(2.0 * phi)
-    c_term = 0.5 * hk_koe * np.sin(2.0 * phi)
-
-    # (A^2+B^2)x^4 + 2AHx^3 - (2AC+B^2)x^2 - 2HCx + C^2 = 0, x = sin(theta)
+    
+    # (A^2 + B^2)*x^4 + 2*A*H*x^3 + (H^2 - A^2 - B^2)*x^2 - H*A*x + A^2/4 = 0, x = sin(theta)
     coeffs = [
         a_term**2 + b_term**2,
         2.0 * a_term * h_koe,
-        -(2.0 * a_term * c_term + b_term**2),
-        -2.0 * h_koe * c_term,
-        c_term**2,
+        h_koe**2-(a_term**2 + b_term**2),
+        -h_koe * a_term,
+        a_term**2/4,
     ]
     sin_theta = _pick_sintheta(np.roots(coeffs))
     if np.isnan(sin_theta):
