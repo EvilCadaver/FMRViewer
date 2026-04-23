@@ -5,24 +5,13 @@ def correct_sintheta(vals, eps=1e-5):
     candidates = [x for x in normalised if x>=0]
     return min(candidates) if candidates else None
 
-Hk = 5.0 #kOe
-Ms = 8 #kGauss
-phi = 45 #deg
+Hk = 4.0 #kOe
+Ms = 6 #kGauss
+phi = 20 #deg
+Ho = 10 #kOe
 
-def find_thetas(H = 10, Hk = 4.0, Ms = 6, phi = 20):
+def find_thetas(H = Ho, Hk = Hk, Ms = Ms, phi = phi):
     phi = np.radians(phi)
-    # A = Hk*np.sin(2*phi)
-    # B = 4*np.pi*Ms + Hk*np.cos(2*phi)
-    # # C = Hk/2*np.sin(2*phi)
-    # # (A^2 + B^2)*x^4 + 2*A*H*x^3 + (H^2 - 2*A*C - B^2)*x^2 - 2*H*C*x + C^2 = 0
-    # # (A^2 + B^2)*x^4 + 2*A*H*x^3 + (H^2 - A^2 - B^2)*x^2 - H*A*x + A^2/4 = 0
-
-    # a = (A**2+B**2)
-    # b = 2*A*H
-    # c = H**2-(A**2+B**2)
-    # d = -H*A
-    # e = A**2/4
-
     A = 4*np.pi*Ms-Hk*(2*np.sin(phi)**2-1)
     B = Hk*np.sin(2*phi)/2
     # (A**2+B**2)*x**4 + 2*B*H*x**3 + (H**2 - 4*B**2 - A**2)*x**2 - 4*B*H*x + 4*B**2 = 0, x = sin(theta)
@@ -34,9 +23,9 @@ def find_thetas(H = 10, Hk = 4.0, Ms = 6, phi = 20):
     
     coeffs = [e, d, c, b, a]
     p = np.polynomial.Polynomial(coeffs)
+    
     print('Roots: ', roots:=p.roots())
-    for x in roots:
-        print((A**2+B**2)*x**4 + 2*B*H*x**3 + (H**2 - 4*B**2 - A**2)*x**2 - 4*B*H*x + 4*B**2)
+    print('H check: ', [(H*x + 2*np.pi*Ms*np.sin(2*np.asin(x))-Hk*np.sin(2*(phi-np.asin(x)))) for x in roots])
     return roots
 
 print("Checking for H:")
