@@ -33,7 +33,5 @@ for sintheta in roots:
     if sintheta**2<=1:
         theta = np.asin(sintheta)
         print(f"Theta = {np.rad2deg(theta):.4f}")
-        H_ = Hk/2*np.sin(2*(phi-theta))/np.sin(theta) - 4*np.pi*Ms*np.cos(theta)
-        print(f"H = {H:.3f} kOe")
 
 print("Chosen theta =", f"{np.rad2deg(theta := np.asin(correct_sintheta(roots))):.10f}")
