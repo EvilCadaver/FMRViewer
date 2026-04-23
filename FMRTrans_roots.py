@@ -23,8 +23,9 @@ def find_thetas(H = Ho, Hk = Hk, Ms = Ms, phi = phi):
     
     coeffs = [e, d, c, b, a]
     p = np.polynomial.Polynomial(coeffs)
-    
-    print('Roots: ', roots:=p.roots())
+    roots = p.roots()
+
+    print('Roots: ', roots)
     print('H check: ', [(H*x + 2*np.pi*Ms*np.sin(2*np.asin(x))-Hk*np.sin(2*(phi-np.asin(x)))) for x in roots])
     return roots
 
