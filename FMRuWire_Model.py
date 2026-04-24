@@ -1,13 +1,16 @@
 import numpy as np
 
-def correct_sintheta(vals):
-    vals = [x for x in vals if x>0]
-    return min(vals) if vals else None
+Gamma = 1.399611 #GHz/kOe
 
 Hk = 4.0 #kOe
 Ms = 6 #kGauss
 phi = 45 #deg
 Ho = 1 #kOe
+gyromagnetic_factor = 2 
+
+def correct_theta(vals):
+    vals = [x for x in vals if x>0]
+    return min(vals) if vals else None
 
 def find_thetas(H = Ho, Hk = Hk, Ms = Ms, phi = phi):
     phi = np.radians(phi)
@@ -42,4 +45,4 @@ print("Checking for H:")
 for theta in (roots := find_thetas()):
     print(f"Theta = {np.rad2deg(theta):.4f}")
 
-print("Chosen theta =", f"{np.rad2deg(correct_sintheta(roots)):.5f}")
+print("Chosen theta =", f"{np.rad2deg(correct_theta(roots)):.5f}")
