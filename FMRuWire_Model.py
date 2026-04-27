@@ -6,10 +6,10 @@ from scipy.integrate import quad, IntegrationWarning
 
 Gamma = 1.399611 #GHz/kOe
 
-Hk = float(4.0) #kOe
+Hk = float(5.0) #kOe
 Ms = float(6) #kGauss
 phi = float(30) #deg
-Ho = float(10) #kOe
+Ho = float(2) #kOe
 gyromagnetic_factor = float(2)
 freq = float(36) #GHz
 omg = (2*np.pi*freq/Gamma/gyromagnetic_factor) # omega/gamma 
