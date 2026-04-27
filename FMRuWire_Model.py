@@ -1,11 +1,15 @@
 import numpy as np
+import time
+import warnings
+from scipy.integrate import quad, IntegrationWarning
+
 
 Gamma = 1.399611 #GHz/kOe
 
 Hk = float(4.0) #kOe
 Ms = float(6) #kGauss
-phi = float(45) #deg
-Ho = float(1) #kOe
+phi = float(30) #deg
+Ho = float(10) #kOe
 gyromagnetic_factor = float(2)
 freq = float(36) #GHz
 omg = (2*np.pi*freq/Gamma/gyromagnetic_factor) # omega/gamma 
@@ -86,3 +90,63 @@ print("Chosen theta =", f"{np.rad2deg(theta := correct_theta(roots)):.5f}")
 
 print("Re(mu(eta=0)) =", mu_Re(theta= theta))
 print("Im(mu(eta=0)) =", mu_Im(theta= theta))
+
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always", IntegrationWarning)
+    start = time.perf_counter()
+    result, err = quad(mu_Re, 0, 2*np.pi, epsabs=1e-12, epsrel=1e-12, limit=200, args=(Ho, Hk, Ms, phi, omg, alpha, theta))
+    result = result/2/np.pi
+    elapsed = time.perf_counter() - start
+    print("Re(mu(eta_avg, 2*pi)) =", f"{result:.10f}", "Execution time =", f"{elapsed:.5f} (s)")
+    if w:
+        print("Warning:", w[0].message)
+
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always", IntegrationWarning)
+    start = time.perf_counter()
+    result, err = quad(mu_Im, 0, 2*np.pi, epsabs=1e-12, epsrel=1e-12, limit=200, args=(Ho, Hk, Ms, phi, omg, alpha, theta))
+    result = result/2/np.pi
+    elapsed = time.perf_counter() - start
+    print("Im(mu(eta_avg, 2*pi)) =", f"{result:.10f}", "Execution time =", f"{elapsed:.5f} (s)")
+    if w:
+        print("Warning:", w[0].message)
+
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always", IntegrationWarning)
+    start = time.perf_counter()
+    result, err = quad(mu_Re, 0, np.pi, epsabs=1e-12, epsrel=1e-12, limit=200, args=(Ho, Hk, Ms, phi, omg, alpha, theta))
+    result = result/np.pi
+    elapsed = time.perf_counter() - start
+    print("Re(mu(eta_avg, pi)) =", f"{result:.10f}", "Execution time =", f"{elapsed:.5f} (s)")
+    if w:
+        print("Warning:", w[0].message)
+
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always", IntegrationWarning)
+    start = time.perf_counter()
+    result, err = quad(mu_Im, 0, np.pi, epsabs=1e-12, epsrel=1e-12, limit=200, args=(Ho, Hk, Ms, phi, omg, alpha, theta))
+    result = result/np.pi
+    elapsed = time.perf_counter() - start
+    print("Im(mu(eta_avg, pi)) =", f"{result:.10f}", "Execution time =", f"{elapsed:.5f} (s)")
+    if w:
+        print("Warning:", w[0].message)
+
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always", IntegrationWarning)
+    start = time.perf_counter()
+    result, err = quad(mu_Re, 0, np.pi/2, epsabs=1e-12, epsrel=1e-12, limit=200, args=(Ho, Hk, Ms, phi, omg, alpha, theta))
+    result = result/np.pi*2
+    elapsed = time.perf_counter() - start
+    print("Re(mu(eta_avg, pi/2)) =", f"{result:.10f}", "Execution time =", f"{elapsed:.5f} (s)")
+    if w:
+        print("Warning:", w[0].message)
+
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always", IntegrationWarning)
+    start = time.perf_counter()
+    result, err = quad(mu_Im, 0, np.pi/2, epsabs=1e-12, epsrel=1e-12, limit=200, args=(Ho, Hk, Ms, phi, omg, alpha, theta))
+    result = result/np.pi*2
+    elapsed = time.perf_counter() - start
+    print("Im(mu(eta_avg, pi/2)) =", f"{result:.10f}", "Execution time =", f"{elapsed:.5f} (s)")
+    if w:
+        print("Warning:", w[0].message)
