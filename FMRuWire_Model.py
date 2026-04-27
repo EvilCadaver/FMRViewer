@@ -2,11 +2,14 @@ import numpy as np
 
 Gamma = 1.399611 #GHz/kOe
 
-Hk = 4.0 #kOe
-Ms = 6 #kGauss
-phi = 45 #deg
-Ho = 1 #kOe
-gyromagnetic_factor = 2 
+Hk = float(4.0) #kOe
+Ms = float(6) #kGauss
+phi = float(45) #deg
+Ho = float(1) #kOe
+gyromagnetic_factor = float(2)
+freq = float(36) #GHz
+omg = (2*np.pi*freq/Gamma/gyromagnetic_factor) # omega/gamma 
+alpha = 1e-3 #Gilbert damping
 
 def correct_theta(vals):
     vals = [x for x in vals if x>0]
@@ -41,8 +44,45 @@ def find_thetas(H = Ho, Hk = Hk, Ms = Ms, phi = phi):
     print('H original check:', [Hk/2*np.sin(2*(phi-theta))/np.sin(theta) - 4*np.pi*Ms*np.cos(theta) for theta in true_thetas])
     return true_thetas
 
+# mu = (a + j*b)/(c + j*d) = (a*c + b*d)/(c**2 + d**2) + j*(b*c - a*d)/(c**2 + d**2)
+# mu_Re = (a*c + b*d)/(c**2 + d**2)
+def mu_Re(x = 0, H = Ho, Hk = Hk, Ms = Ms, phi = phi, omg = omg, alpha = alpha, theta = 0):
+    
+    Heff = H*np.cos(theta) - 2*np.pi*Ms*np.sin(theta)**2 + Hk*np.cos(phi-theta)**2
+    A = 4*np.pi*Ms*np.cos(theta)*np.sin(x)*np.cos(x)
+    B = Heff + 4*np.pi*Ms*np.sin(x)**2
+    C = Heff - Hk*np.sin(phi-theta)**2+4*np.pi*Ms*np.cos(theta)**2*np.cos(x)**2
+
+    a = A**2 - (1 + alpha**2)*omg**2 + B*C + 4*np.pi*Ms*(np.sin(x)**2*np.cos(theta)**2*B + np.cos(x)**2*C)
+    b = alpha*omg*(B + C + 4*np.pi*Ms*(np.sin(x)**2*np.cos(theta)**2 + np.cos(x)**2))
+    b = -b #Kittel's variant
+    c = B*C - A**2 - (1 + alpha**2)*omg**2
+    d = alpha*omg*(B + C)
+
+    return (a*c+b*d)/(c**2+d**2)
+
+# mu_Im = (b*c - a*d)/(c**2 + d**2)
+def mu_Im(x = 0, H = Ho, Hk = Hk, Ms = Ms, phi = phi, omg = omg, alpha = alpha, theta = 0):
+    
+    Heff = H*np.cos(theta) - 2*np.pi*Ms*np.sin(theta)**2 + Hk*np.cos(phi-theta)**2
+    A = 4*np.pi*Ms*np.cos(theta)*np.sin(x)*np.cos(x)
+    B = Heff + 4*np.pi*Ms*np.sin(x)**2
+    C = Heff - Hk*np.sin(phi-theta)**2+4*np.pi*Ms*np.cos(theta)**2*np.cos(x)**2
+
+    a = A**2 - (1 + alpha**2)*omg**2 + B*C + 4*np.pi*Ms*(np.sin(x)**2*np.cos(theta)**2*B + np.cos(x)**2*C)
+    b = alpha*omg*(B + C + 4*np.pi*Ms*(np.sin(x)**2*np.cos(theta)**2 + np.cos(x)**2))
+    b = -b #Kittel's variant
+    c = B*C - A**2 - (1 + alpha**2)*omg**2
+    d = alpha*omg*(B + C)
+
+    return (b*c - a*d)/(c**2 + d**2)
+
+
 print("Checking for H:")
 for theta in (roots := find_thetas()):
     print(f"Theta = {np.rad2deg(theta):.4f}")
 
-print("Chosen theta =", f"{np.rad2deg(correct_theta(roots)):.5f}")
+print("Chosen theta =", f"{np.rad2deg(theta := correct_theta(roots)):.5f}")
+
+print("Re(mu(eta=0)) =", mu_Re(theta= theta))
+print("Im(mu(eta=0)) =", mu_Im(theta= theta))
