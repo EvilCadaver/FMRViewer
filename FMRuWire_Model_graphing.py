@@ -6,12 +6,12 @@ from scipy.integrate import quad, IntegrationWarning
 import matplotlib.pyplot as plt
 
 H0 = float(5) #kOe
-H_K = float(5.0) #kOe
-M_S = float(6) #kGauss
-PHI = float(10) #deg
-ALPHA = 1e-3 #Gilbert damping
-GYROMAG_FACTOR = float(2) 
-FREQ = float(36) #GHz
+H_K = float(0.5) #kOe
+M_S = float(10) #kGauss
+PHI = float(15) #deg
+ALPHA = 5e-3 #Gilbert damping
+GYROMAG_FACTOR = float(2.11) 
+FREQ = float(16) #GHz
 GAMMA = 1.399611 #GHz/kOe
 omg = (2*np.pi*FREQ/GAMMA/GYROMAG_FACTOR) #omega/gamma 
 
@@ -70,16 +70,17 @@ def mu_eff_integrated(H = H0, Hk = H_K, Ms = M_S, phi = PHI, omg = omg, alpha = 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always", IntegrationWarning)
         start = time.perf_counter()
-        mu_Re, err_mu_Re = quad(lambda x: np.real(mu_eff(x, H, Hk, Ms, phi, omg, alpha)), 0, np.pi, epsabs=1e-12, epsrel=1e-12, limit=200)
+        mu_Re, err_mu_Re = quad(lambda x: np.real(mu_eff(x, H, Hk, Ms, phi, omg, alpha)), 0, np.pi, epsabs=1e-8, epsrel=1e-8, limit=50)
         mu_Re = mu_Re/np.pi
-        mu_Im, err_mu_Im = quad(lambda x: np.imag(mu_eff(x, H, Hk, Ms, phi, omg, alpha)), 0, np.pi, epsabs=1e-12, epsrel=1e-12, limit=200)
+        mu_Im, err_mu_Im = quad(lambda x: np.imag(mu_eff(x, H, Hk, Ms, phi, omg, alpha)), 0, np.pi, epsabs=1e-8, epsrel=1e-8, limit=50)
         mu_Im = mu_Im/np.pi
         elapsed = time.perf_counter() - start
         if w:
             print("Warning:", w[0].message)
     return mu_Re + 1j*mu_Im, err_mu_Re + 1j*err_mu_Im, elapsed
-        
-H_oe = np.arange(0, 15000 + 100, 100)
+
+step = 20        
+H_oe = np.arange(0, 10000 + step, step)
 H_koe = H_oe / 1000
 
 mu_values = np.array([mu_eff_integrated(H)[0] for H in H_koe])
@@ -87,10 +88,13 @@ mu_values = np.array([mu_eff_integrated(H)[0] for H in H_koe])
 mu_Re = np.real(mu_values)
 mu_Im = np.imag(mu_values)
 
+dP_dH = np.gradient(np.sqrt(np.sqrt(mu_Re**2+mu_Im**2) + mu_Im), H_oe)
+
 fig, ax = plt.subplots()
 
-ax.plot(H_oe, mu_Re, label="Re(mu)")
-ax.plot(H_oe, mu_Im, label="Im(mu)")
+# ax.plot(H_oe, mu_Re, label="Re(mu)")
+# ax.plot(H_oe, mu_Im, label="Im(mu)")
+ax.plot(H_oe, dP_dH, label="dP/dH")
 
 ax.set_xlabel("H (Oe)")
 ax.set_ylabel("mu")
