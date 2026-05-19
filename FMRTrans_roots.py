@@ -4,10 +4,10 @@ def correct_sintheta(vals):
     vals = [x for x in vals if x>0]
     return min(vals) if vals else None
 
-Hk = 4.0 #kOe
-Ms = 6 #kGauss
-phi = 45 #deg
-Ho = 1 #kOe
+Hk = 1.0 #kOe
+Ms = 10 #kGauss
+phi = 15 #deg
+Ho = 0.25 #kOe
 
 def find_thetas(H = Ho, Hk = Hk, Ms = Ms, phi = phi):
     phi = np.radians(phi)
@@ -23,7 +23,8 @@ def find_thetas(H = Ho, Hk = Hk, Ms = Ms, phi = phi):
     coeffs = [e, d, c, b, a]
     p = np.polynomial.Polynomial(coeffs)
     roots = p.roots()
-
+    roots = [x for x in roots if -1 < x < 1]
+    
     print('Roots: ', roots)
     theta1 = [np.asin(x) for x in roots]
     theta2 = [np.pi - np.asin(x) for x in roots]
