@@ -6,12 +6,12 @@ from scipy.integrate import quad, IntegrationWarning
 import matplotlib.pyplot as plt
 
 H0 = float(5) #kOe
-H_K = float(1) #kOe
-M_S = float(10) #kGauss
-PHI = float(15) #deg
+H_K = float(2) #kOe
+M_S = float(5) #kGauss
+PHI = float(45) #deg
 ALPHA = 5e-3 #Gilbert damping
 GYROMAG_FACTOR = float(2.11) 
-FREQ = float(36) #GHz
+FREQ = float(18) #GHz
 GAMMA = 1.399611 #GHz/kOe
 omg = (2*np.pi*FREQ/GAMMA/GYROMAG_FACTOR) #omega/gamma 
 
@@ -35,11 +35,12 @@ def find_thetas(H = H0, Hk = H_K, Ms = M_S, phi = PHI):
     roots = p.roots()
     roots = [x for x in roots if -1 < x < 1]
     # print('Roots: ', roots)
+    
     theta1 = [np.asin(x) for x in roots]
     theta2 = [np.pi - np.asin(x) for x in roots]
     thetas = theta1 + theta2
-    eps = 1e-7
     
+    eps = 1e-7
     true_thetas = [theta for theta in thetas if abs(H - (Hk/2*np.sin(2*(phi-theta))/np.sin(theta) - 4*np.pi*Ms*np.cos(theta)))<eps]
 
     # print('Useable thetas:', np.rad2deg(true_thetas))
@@ -70,9 +71,9 @@ def mu_eff_integrated(H = H0, Hk = H_K, Ms = M_S, phi = PHI, omg = omg, alpha = 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always", IntegrationWarning)
         start = time.perf_counter()
-        mu_Re, err_mu_Re = quad(lambda x: np.real(mu_eff(x, H, Hk, Ms, phi, omg, alpha)), 0, np.pi/2, epsabs=1e-7, epsrel=1e-7, limit=50)
+        mu_Re, err_mu_Re = quad(lambda x: np.real(mu_eff(x, H, Hk, Ms, phi, omg, alpha)), 0, np.pi/2, epsabs=1e-8, epsrel=1e-8, limit=50)
         mu_Re = mu_Re/np.pi
-        mu_Im, err_mu_Im = quad(lambda x: np.imag(mu_eff(x, H, Hk, Ms, phi, omg, alpha)), 0, np.pi/2, epsabs=1e-7, epsrel=1e-7, limit=50)
+        mu_Im, err_mu_Im = quad(lambda x: np.imag(mu_eff(x, H, Hk, Ms, phi, omg, alpha)), 0, np.pi/2, epsabs=1e-8, epsrel=1e-8, limit=50)
         mu_Im = mu_Im/np.pi
         elapsed = time.perf_counter() - start
         if w:
@@ -81,7 +82,7 @@ def mu_eff_integrated(H = H0, Hk = H_K, Ms = M_S, phi = PHI, omg = omg, alpha = 
     return mu_Re + 1j*mu_Im, err_mu_Re + 1j*err_mu_Im, elapsed
 
 step = 50 #Oe       
-H_oe = np.arange(step, 15000 + step, step)
+H_oe = np.arange(step, 50000 + step, step)
 H_koe = H_oe / 1000
 
 mu_values = np.array([mu_eff_integrated(H)[0] for H in H_koe])
