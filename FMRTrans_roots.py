@@ -1,13 +1,14 @@
 import numpy as np
+from scipy.optimize import minimize_scalar
 
 def correct_sintheta(vals):
     vals = [x for x in vals if x>0]
     return min(vals) if vals else None
 
-Hk = 1.0 #kOe
-Ms = 10 #kGauss
-phi = 15 #deg
-Ho = 0.25 #kOe
+Hk = 0.5 #kOe
+Ms = 0.65 #kGauss
+phi = 45 #deg
+Ho = 1 #kOe
 
 def find_thetas(H = Ho, Hk = Hk, Ms = Ms, phi = phi):
     phi = np.radians(phi)
@@ -44,3 +45,9 @@ for theta in (roots := find_thetas()):
     print(f"Theta = {np.rad2deg(theta):.4f}")
 
 print("Chosen theta =", f"{np.rad2deg(correct_sintheta(roots)):.5f}")
+
+def E(theta):
+    return -Ms*Ho*np.cos(np.radians(theta)) + 2*np.pi*Ms**2*np.sin(np.radians(theta))**2 + Hk*Ms/2*np.sin(np.radians(phi) - np.radians(theta))**2
+
+result = minimize_scalar(E, bounds=(-1,5), method="bounded")
+print("Theta by minimisation =", f"{result.x:.5f}")

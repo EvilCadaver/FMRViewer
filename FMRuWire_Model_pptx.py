@@ -139,7 +139,7 @@ def calculate_block(params):
 result_blocks = []
 
 if __name__ == "__main__":
-    with ProcessPoolExecutor(max_workers=12) as executor:
+    with ProcessPoolExecutor(max_workers=8) as executor:
         result_blocks = list(executor.map(calculate_block, parameter_sets))
 
     with open("./Output/mu_eff_sweep.csv", "w", newline="") as f:

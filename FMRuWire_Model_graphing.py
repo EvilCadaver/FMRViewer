@@ -6,10 +6,10 @@ from scipy.integrate import quad, IntegrationWarning
 import matplotlib.pyplot as plt
 
 H0 = float(5) #kOe
-H_K = float(0.5) #kOe
-M_S = float(0.65) #kGauss
-PHI = float(45) #deg
-ALPHA = 1e-3 #Gilbert damping
+H_K = float(1) #kOe
+M_S = float(5) #kGauss
+PHI = float(15) #deg
+ALPHA = 5e-3 #Gilbert damping
 GYROMAG_FACTOR = float(2.0) 
 FREQ = float(36) #GHz
 GAMMA = 1.399611 #GHz/kOe
@@ -81,8 +81,8 @@ def mu_eff_integrated(H = H0, Hk = H_K, Ms = M_S, phi = PHI, omg = omg, alpha = 
             print(f"With inputs: H={H}, Hk={Hk}, Ms={Ms}, phi={phi}, omg={omg}, alpha={alpha}")
     return mu_Re + 1j*mu_Im, err_mu_Re + 1j*err_mu_Im, elapsed
 
-step = 20 #Oe       
-H_oe = np.arange(5000 + step, 14000 + step, step)
+step = 50 #Oe       
+H_oe = np.arange(0 + step, 20000 + step, step)
 H_koe = H_oe / 1000
 
 mu_values = np.array([mu_eff_integrated(H)[0] for H in H_koe])
