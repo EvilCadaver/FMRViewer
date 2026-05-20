@@ -12,7 +12,7 @@ from scipy.optimize import minimize_scalar
 H0 = float(5) #kOe
 H_K = float(0.5) #kOe
 M_S = float(0.65) #kGauss
-PHI = float(45) #deg
+PHI = float(45.0) #deg
 ALPHA = 1e-3 #Gilbert damping
 GYROMAG_FACTOR = float(2.0) 
 FREQ = float(36) #GHz
@@ -20,7 +20,6 @@ GAMMA = 1.399611 #GHz/kOe
 omg = (FREQ/(GAMMA*GYROMAG_FACTOR)) #omega/gamma 
 
 def find_theta(H = H0, Hk = H_K, Ms = M_S, phi = PHI):
-    phi = np.radians(phi)
     def Energy(theta):
         return -Ms*H*np.cos(theta) + 2*np.pi*Ms**2*np.sin(theta)**2 + Hk*Ms/2*np.sin(phi - theta)**2
     result = minimize_scalar(Energy, bounds=(np.deg2rad(-1),np.deg2rad(5)), method="bounded")

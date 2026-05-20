@@ -50,8 +50,8 @@ def find_thetas(H = H0, Hk = H_K, Ms = M_S, phi = PHI):
     return true_thetas
 
 def mu_eff(eta = 0, H = H0, Hk = H_K, Ms = M_S, phi = PHI, omg = omg, alpha = ALPHA):
-    phi = np.radians(phi)
     theta = correct_theta(find_thetas(H= H, Hk= Hk, Ms= Ms, phi= phi))
+    phi = np.radians(phi)
     Heff = H*np.cos(theta) - 2*np.pi*Ms*np.sin(theta)**2 + Hk*np.cos(phi-theta)**2
     A = 4*np.pi*Ms*np.cos(theta)*np.sin(eta)*np.cos(eta)
     B = Heff + 4*np.pi*Ms*np.sin(eta)**2
