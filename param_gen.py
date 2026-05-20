@@ -7,8 +7,8 @@ def frange(start, stop, step, decimals=10):
 param_ranges = {
     "H_K": [0.5],
     "M_S": [0.65],
-    "phi": frange(5, 90, 5),
     "alpha": [1e-3, 5e-3],
+    "phi": frange(5, 20, 5),
     "g": [2.0],
     "f": [36],
 }
@@ -18,4 +18,4 @@ parameter_sets = [
     for values in product(*param_ranges.values())
 ]
 
-print(len(parameter_sets))
+print(parameter_sets)

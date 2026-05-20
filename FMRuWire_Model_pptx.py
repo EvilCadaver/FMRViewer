@@ -1,6 +1,7 @@
 import csv
 import numpy as np
 from itertools import product
+from concurrent.futures import ProcessPoolExecutor
 import time
 import warnings
 from scipy.integrate import quad, IntegrationWarning
@@ -83,20 +84,20 @@ def mu_eff_integrated(H = H0, Hk = H_K, Ms = M_S, phi = PHI, omg = omg, alpha = 
             print(f"With inputs: H={H}, Hk={Hk}, Ms={Ms}, phi={phi}, omg={omg}, alpha={alpha}")
     return mu_Re + 1j*mu_Im, err_mu_Re + 1j*err_mu_Im, elapsed
 
-parameter_sets = [
-    {"H_K": 0.5, "M_S": 0.65, "phi": 15, "alpha": 1e-3, "g": 2.0, "f": 36},
-    {"H_K": 0.5, "M_S": 0.65, "phi": 30, "alpha": 1e-3, "g": 2.0, "f": 36},
-    {"H_K": 0.5, "M_S": 0.65, "phi": 0, "alpha": 5e-3, "g": 2.0, "f": 36},
-]
+# parameter_sets = [
+#     {"H_K": 0.5, "M_S": 0.65, "phi": 15, "alpha": 1e-3, "g": 2.0, "f": 36},
+#     {"H_K": 0.5, "M_S": 0.65, "phi": 30, "alpha": 1e-3, "g": 2.0, "f": 36},
+#     {"H_K": 0.5, "M_S": 0.65, "phi": 0, "alpha": 5e-3, "g": 2.0, "f": 36},
+# ]
 
 def frange(start, stop, step, decimals=10):
     return np.round(np.arange(start, stop + step / 2, step), decimals)
 
 param_ranges = {
+    "alpha": [1e-3, 5e-3],
     "H_K": [0.5],
     "M_S": [0.65],
     "phi": frange(5, 90, 5),
-    "alpha": [1e-3, 5e-3],
     "g": [2.0],
     "f": [36],
 }
@@ -107,12 +108,10 @@ parameter_sets = [
 ]
 
 step = 5 #Oe       
-H_oe = np.arange(step, 15000 + step, step)
+H_oe = np.arange(step, 20000 + step, step)
 H_koe = H_oe / 1000
 
-result_blocks = []
-
-for params in parameter_sets:
+def calculate_block(params):
     omg_i = params["f"] / (GAMMA * params["g"])
 
     mu_values = np.array([
@@ -135,37 +134,43 @@ for params in parameter_sets:
         H_oe
     )
 
-    result_blocks.append((mu_Re, mu_Im, dP_dH))
+    return mu_Re, mu_Im, dP_dH
 
-with open("./Output/mu_eff_sweep.csv", "w", newline="") as f:
-    writer = csv.writer(f)
+result_blocks = []
 
-    # First row
-    writer.writerow(
-        ["H"] + ["mu_Re", "mu_Im", "dP/dH"] * len(parameter_sets)
-    )
+if __name__ == "__main__":
+    with ProcessPoolExecutor(max_workers=12) as executor:
+        result_blocks = list(executor.map(calculate_block, parameter_sets))
 
-    # Parameter rows
-    for param_name in ["H_K", "M_S", "phi", "alpha", "g", "f"]:
-        row = [param_name]
+    with open("./Output/mu_eff_sweep.csv", "w", newline="") as f:
+        writer = csv.writer(f)
 
-        for params in parameter_sets:
-            row.extend([params[param_name]] * 3)
+        # First row
+        writer.writerow(
+            ["H"] + ["mu_Re", "mu_Im", "dP/dH"] * len(parameter_sets)
+        )
 
-        writer.writerow(row)
+        # Parameter rows
+        for param_name in ["H_K", "M_S", "phi", "alpha", "g", "f"]:
+            row = [param_name]
 
-    # Data rows
-    for i, H in enumerate(H_oe):
-        row = [H]
+            for params in parameter_sets:
+                row.extend([params[param_name]] * 3)
 
-        for mu_Re, mu_Im, dP_dH in result_blocks:
-            row.extend([
-                mu_Re[i],
-                mu_Im[i],
-                dP_dH[i],
-            ])
+            writer.writerow(row)
 
-        writer.writerow(row)
+        # Data rows
+        for i, H in enumerate(H_oe):
+            row = [H]
+
+            for mu_Re, mu_Im, dP_dH in result_blocks:
+                row.extend([
+                    mu_Re[i],
+                    mu_Im[i],
+                    dP_dH[i],
+                ])
+
+            writer.writerow(row)
 
 
 # mu_values = np.array([mu_eff_integrated(H)[0] for H in H_koe])
