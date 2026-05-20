@@ -6,9 +6,9 @@ from scipy.integrate import quad, IntegrationWarning
 import matplotlib.pyplot as plt
 
 H0 = float(5) #kOe
-H_K = float(1) #kOe
-M_S = float(5) #kGauss
-PHI = float(15) #deg
+H_K = float(0.5) #kOe
+M_S = float(0.65) #kGauss
+PHI = float(90) #deg
 ALPHA = 5e-3 #Gilbert damping
 GYROMAG_FACTOR = float(2.0) 
 FREQ = float(36) #GHz
@@ -20,7 +20,6 @@ def correct_theta(vals):
     return min(vals) if vals else None
 
 def find_thetas(H = H0, Hk = H_K, Ms = M_S, phi = PHI):
-    phi = np.radians(phi)
     A = 4*np.pi*Ms-Hk*(np.sin(phi)**2-np.cos(phi)**2)
     B = Hk*np.sin(2*phi)
     ## (A**2+B**2)*x**4 + 2*B*H*x**3 + (H**2 - A**2 - B**2)*x**2 - B*H*x + B**2/4 = 0, x = sin(theta)
@@ -50,8 +49,9 @@ def find_thetas(H = H0, Hk = H_K, Ms = M_S, phi = PHI):
     return true_thetas
 
 def mu_eff(eta = 0, H = H0, Hk = H_K, Ms = M_S, phi = PHI, omg = omg, alpha = ALPHA):
-    theta = correct_theta(find_thetas(H= H, Hk= Hk, Ms= Ms, phi= phi))
     phi = np.radians(phi)
+    theta = correct_theta(find_thetas(H= H, Hk= Hk, Ms= Ms, phi= phi))
+    
     Heff = H*np.cos(theta) - 2*np.pi*Ms*np.sin(theta)**2 + Hk*np.cos(phi-theta)**2
     A = 4*np.pi*Ms*np.cos(theta)*np.sin(eta)*np.cos(eta)
     B = Heff + 4*np.pi*Ms*np.sin(eta)**2

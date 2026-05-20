@@ -70,7 +70,7 @@ param_ranges = {
     "alpha": [5e-3],
     "H_K": [0.5],
     "M_S": [0.65],
-    "phi": frange(5, 90, 5),
+    "phi": frange(0, 90, 5),
     "g": [2.0],
     "f": [36],
 }
@@ -117,7 +117,7 @@ result_blocks = []
 
 if __name__ == "__main__":
     with ProcessPoolExecutor(max_workers=8) as executor:
-        result_blocks = list(executor.map(calculate_block, parameter_sets))
+        result_blocks = list(executor.map(calculate_block, parameter_sets,chunksize=1))
 
     with open("./Output/mu_eff_sweep.csv", "w", newline="") as f:
         writer = csv.writer(f)
