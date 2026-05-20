@@ -1,3 +1,4 @@
+import csv
 import numpy as np
 import time
 import warnings
@@ -81,27 +82,89 @@ def mu_eff_integrated(H = H0, Hk = H_K, Ms = M_S, phi = PHI, omg = omg, alpha = 
             print(f"With inputs: H={H}, Hk={Hk}, Ms={Ms}, phi={phi}, omg={omg}, alpha={alpha}")
     return mu_Re + 1j*mu_Im, err_mu_Re + 1j*err_mu_Im, elapsed
 
-step = 20 #Oe       
-H_oe = np.arange(5000 + step, 14000 + step, step)
+parameter_sets = [
+    {"H_K": 0.5, "M_S": 0.65, "phi": 15, "alpha": 1e-3, "g": 2.0, "f": 36},
+    {"H_K": 0.5, "M_S": 0.65, "phi": 30, "alpha": 1e-3, "g": 2.0, "f": 36},
+    {"H_K": 0.5, "M_S": 0.65, "phi": 30, "alpha": 5e-3, "g": 2.0, "f": 36},
+]
+step = 50 #Oe       
+H_oe = np.arange(step, 15000 + step, step)
 H_koe = H_oe / 1000
 
-mu_values = np.array([mu_eff_integrated(H)[0] for H in H_koe])
+result_blocks = []
 
-mu_Re = np.real(mu_values)
-mu_Im = np.imag(mu_values)
+for params in parameter_sets:
+    omg_i = params["f"] / (GAMMA * params["g"])
 
-dP_dH = np.gradient(np.sqrt(np.sqrt(mu_Re**2+mu_Im**2) + mu_Im), H_oe)
+    mu_values = np.array([
+        mu_eff_integrated(
+            H=H,
+            Hk=params["H_K"],
+            Ms=params["M_S"],
+            phi=params["phi"],
+            omg=omg_i,
+            alpha=params["alpha"],
+        )[0]
+        for H in H_koe
+    ])
 
-fig, ax = plt.subplots()
+    mu_Re = np.real(mu_values)
+    mu_Im = np.imag(mu_values)
+
+    dP_dH = np.gradient(
+        np.sqrt(np.sqrt(mu_Re**2 + mu_Im**2) + mu_Im),
+        H_oe
+    )
+
+    result_blocks.append((mu_Re, mu_Im, dP_dH))
+
+with open("./Output/mu_eff_sweep.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+
+    # First row
+    writer.writerow(
+        ["H"] + ["mu_Re", "mu_Im", "dP/dH"] * len(parameter_sets)
+    )
+
+    # Parameter rows
+    for param_name in ["H_K", "M_S", "phi", "alpha", "g", "f"]:
+        row = [param_name]
+
+        for params in parameter_sets:
+            row.extend([params[param_name]] * 3)
+
+        writer.writerow(row)
+
+    # Data rows
+    for i, H in enumerate(H_oe):
+        row = [H]
+
+        for mu_Re, mu_Im, dP_dH in result_blocks:
+            row.extend([
+                mu_Re[i],
+                mu_Im[i],
+                dP_dH[i],
+            ])
+
+        writer.writerow(row)
+
+
+# mu_values = np.array([mu_eff_integrated(H)[0] for H in H_koe])
+
+# mu_Re = np.real(mu_values)
+# mu_Im = np.imag(mu_values)
+# dP_dH = np.gradient(np.sqrt(np.sqrt(mu_Re**2+mu_Im**2) + mu_Im), H_oe)
+
+# fig, ax = plt.subplots()
 
 # ax.plot(H_oe, mu_Re, label="Re(mu)")
 # ax.plot(H_oe, mu_Im, label="Im(mu)")
-ax.plot(H_oe, dP_dH, label="dP/dH")
+# ax.plot(H_oe, dP_dH, label="dP/dH")
 
-ax.set_xlabel("H (Oe)")
-ax.set_ylabel("mu")
-ax.set_title("Effective permeability vs field")
-ax.legend()
-ax.grid(True)
+# ax.set_xlabel("H (Oe)")
+# ax.set_ylabel("mu")
+# ax.set_title("Effective permeability vs field")
+# ax.legend()
+# ax.grid(True)
 
-plt.show()
+# plt.show()

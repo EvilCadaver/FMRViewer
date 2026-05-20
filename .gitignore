@@ -17,3 +17,5 @@ dist/
 *.log
 *.tmp
 *.bak
+
+Output/
