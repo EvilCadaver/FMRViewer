@@ -27,7 +27,7 @@ def find_theta(H = H0, Hk = H_K, Ms = M_S, phi = PHI):
     return result.x
 
 def mu_eff(eta = 0, H = H0, Hk = H_K, Ms = M_S, phi = PHI, omg = omg, alpha = ALPHA):
-    
+    phi = np.radians(phi)
     theta = find_theta(H= H, Hk= Hk, Ms= Ms, phi= phi)
     Heff = H*np.cos(theta) - 2*np.pi*Ms*np.sin(theta)**2 + Hk*np.cos(phi-theta)**2
     A = 4*np.pi*Ms*np.cos(theta)*np.sin(eta)*np.cos(eta)
@@ -68,7 +68,7 @@ def frange(start, stop, step, decimals=10):
     return np.round(np.arange(start, stop + step / 2, step), decimals)
 
 param_ranges = {
-    "alpha": [1e-3, 5e-3],
+    "alpha": [5e-3],
     "H_K": [0.5],
     "M_S": [0.65],
     "phi": frange(5, 90, 5),
@@ -80,6 +80,10 @@ parameter_sets = [
     dict(zip(param_ranges.keys(), values))
     for values in product(*param_ranges.values())
 ]
+
+# for i, params in enumerate(parameter_sets):
+#     print(i, params)
+# exit()
 
 step = 5 #Oe       
 H_oe = np.arange(step, 20000 + step, step)
