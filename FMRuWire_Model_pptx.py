@@ -1,5 +1,6 @@
 import csv
 import numpy as np
+from itertools import product
 import time
 import warnings
 from scipy.integrate import quad, IntegrationWarning
@@ -85,9 +86,27 @@ def mu_eff_integrated(H = H0, Hk = H_K, Ms = M_S, phi = PHI, omg = omg, alpha = 
 parameter_sets = [
     {"H_K": 0.5, "M_S": 0.65, "phi": 15, "alpha": 1e-3, "g": 2.0, "f": 36},
     {"H_K": 0.5, "M_S": 0.65, "phi": 30, "alpha": 1e-3, "g": 2.0, "f": 36},
-    {"H_K": 0.5, "M_S": 0.65, "phi": 30, "alpha": 5e-3, "g": 2.0, "f": 36},
+    {"H_K": 0.5, "M_S": 0.65, "phi": 0, "alpha": 5e-3, "g": 2.0, "f": 36},
 ]
-step = 50 #Oe       
+
+def frange(start, stop, step, decimals=10):
+    return np.round(np.arange(start, stop + step / 2, step), decimals)
+
+param_ranges = {
+    "H_K": [0.5],
+    "M_S": [0.65],
+    "phi": frange(5, 90, 5),
+    "alpha": [1e-3, 5e-3],
+    "g": [2.0],
+    "f": [36],
+}
+
+parameter_sets = [
+    dict(zip(param_ranges.keys(), values))
+    for values in product(*param_ranges.values())
+]
+
+step = 5 #Oe       
 H_oe = np.arange(step, 15000 + step, step)
 H_koe = H_oe / 1000
 

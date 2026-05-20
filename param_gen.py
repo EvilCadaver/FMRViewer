@@ -5,7 +5,7 @@ def frange(start, stop, step, decimals=10):
     return np.round(np.arange(start, stop + step / 2, step), decimals)
 
 param_ranges = {
-    "H_K": frange(0.5),
+    "H_K": [0.5],
     "M_S": [0.65],
     "phi": frange(5, 90, 5),
     "alpha": [1e-3, 5e-3],
