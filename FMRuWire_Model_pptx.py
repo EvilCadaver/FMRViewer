@@ -5,8 +5,9 @@ from concurrent.futures import ProcessPoolExecutor
 import time
 import warnings
 from scipy.integrate import quad, IntegrationWarning
+from scipy.optimize import minimize_scalar
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 H0 = float(5) #kOe
 H_K = float(0.5) #kOe
@@ -18,43 +19,16 @@ FREQ = float(36) #GHz
 GAMMA = 1.399611 #GHz/kOe
 omg = (FREQ/(GAMMA*GYROMAG_FACTOR)) #omega/gamma 
 
-def correct_theta(vals):
-    vals = [x for x in vals if x>0]
-    return min(vals) if vals else None
-
-def find_thetas(H = H0, Hk = H_K, Ms = M_S, phi = PHI):
+def find_theta(H = H0, Hk = H_K, Ms = M_S, phi = PHI):
     phi = np.radians(phi)
-    A = 4*np.pi*Ms-Hk*(np.sin(phi)**2-np.cos(phi)**2)
-    B = Hk*np.sin(2*phi)
-    ## (A**2+B**2)*x**4 + 2*B*H*x**3 + (H**2 - A**2 - B**2)*x**2 - B*H*x + B**2/4 = 0, x = sin(theta)
-    a = (A**2+B**2)
-    b = 2*B*H
-    c = (H**2 - B**2 - A**2)
-    d = - B*H
-    e = B**2/4
-    
-    coeffs = [e, d, c, b, a]
-    p = np.polynomial.Polynomial(coeffs)
-    roots = p.roots()
-    roots = [x for x in roots if -1 < x < 1]
-    # print('Roots: ', roots)
-    
-    theta1 = [np.asin(x) for x in roots]
-    theta2 = [np.pi - np.asin(x) for x in roots]
-    thetas = theta1 + theta2
-    
-    eps = 1e-7
-    true_thetas = [theta for theta in thetas if abs(H - (Hk/2*np.sin(2*(phi-theta))/np.sin(theta) - 4*np.pi*Ms*np.cos(theta)))<eps]
-
-    # print('Useable thetas:', np.rad2deg(true_thetas))
-    # print('Equation check:', [(A*np.sin(theta)*np.cos(theta)-B/2+B*np.sin(theta)**2+H*np.sin(theta)) for theta in true_thetas])
-    # print('H with replacements check:', [B/np.sin(theta)/2-B*np.sin(theta)-A*np.cos(theta) for theta in true_thetas])
-    # print('H original check:', [Hk/2*np.sin(2*(phi-theta))/np.sin(theta) - 4*np.pi*Ms*np.cos(theta) for theta in true_thetas])
-    return true_thetas
+    def Energy(theta):
+        return -Ms*H*np.cos(theta) + 2*np.pi*Ms**2*np.sin(theta)**2 + Hk*Ms/2*np.sin(phi - theta)**2
+    result = minimize_scalar(Energy, bounds=(np.deg2rad(-1),np.deg2rad(5)), method="bounded")
+    return result.x
 
 def mu_eff(eta = 0, H = H0, Hk = H_K, Ms = M_S, phi = PHI, omg = omg, alpha = ALPHA):
     
-    theta = correct_theta(find_thetas(H= H, Hk= Hk, Ms= Ms, phi= phi))
+    theta = find_theta(H= H, Hk= Hk, Ms= Ms, phi= phi)
     Heff = H*np.cos(theta) - 2*np.pi*Ms*np.sin(theta)**2 + Hk*np.cos(phi-theta)**2
     A = 4*np.pi*Ms*np.cos(theta)*np.sin(eta)*np.cos(eta)
     B = Heff + 4*np.pi*Ms*np.sin(eta)**2
