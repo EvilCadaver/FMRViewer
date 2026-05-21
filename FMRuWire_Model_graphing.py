@@ -6,12 +6,12 @@ from scipy.integrate import quad, IntegrationWarning
 import matplotlib.pyplot as plt
 
 H0 = float(5) #kOe
-H_K = float(0.5) #kOe
-M_S = float(0.65) #kGauss
-PHI = float(90) #deg
+H_K = float(2) #kOe
+M_S = float(4) #kGauss
+PHI = float(5) #deg
 ALPHA = 5e-3 #Gilbert damping
 GYROMAG_FACTOR = float(2.0) 
-FREQ = float(36) #GHz
+FREQ = float(50) #GHz
 GAMMA = 1.399611 #GHz/kOe
 omg = (FREQ/(GAMMA*GYROMAG_FACTOR)) #omega/gamma 
 
@@ -99,8 +99,8 @@ fig, ax = plt.subplots()
 ax.plot(H_oe, dP_dH, label="dP/dH")
 
 ax.set_xlabel("H (Oe)")
-ax.set_ylabel("mu")
-ax.set_title("Effective permeability vs field")
+ax.set_ylabel("dP/dH")
+ax.set_title("Signal vs field")
 ax.legend()
 ax.grid(True)
 

@@ -1,7 +1,9 @@
 import csv
 import numpy as np
 from itertools import product
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import sys
+import threading
 import time
 import warnings
 from scipy.integrate import quad, IntegrationWarning
@@ -70,8 +72,8 @@ param_ranges = {
     "alpha": [5e-3],
     "H_K": [0.5],
     "M_S": [0.65],
-    "phi": frange(0, 90, 5),
-    "g": [2.0],
+    "phi": [45],
+    "g": frange(2.0, 2.2, 0.01),
     "f": [36],
 }
 
@@ -115,9 +117,88 @@ def calculate_block(params):
 
 result_blocks = []
 
+def format_duration(seconds):
+    seconds = int(max(seconds, 0))
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+
+    if hours:
+        return f"{hours:d}h {minutes:02d}m {seconds:02d}s"
+    if minutes:
+        return f"{minutes:d}m {seconds:02d}s"
+    return f"{seconds:d}s"
+
+def progress_message(completed, total, start_time, frame_index):
+    frames = "|/-\\"
+    elapsed = time.perf_counter() - start_time
+    percent = completed / total if total else 1
+    eta = elapsed * (total - completed) / completed if completed else 0
+    frame = frames[frame_index % len(frames)]
+
+    return (
+        f"\r{frame} Calculating sweep: {completed}/{total} "
+        f"({percent:6.2%}) | elapsed {format_duration(elapsed)} | "
+        f"ETA {format_duration(eta)}"
+    )
+
+def progress_spinner(state, total, start_time, stop_event):
+    frame_index = 0
+    last_line_length = 0
+
+    while not stop_event.is_set():
+        with state["lock"]:
+            completed = state["completed"]
+
+        message = progress_message(completed, total, start_time, frame_index)
+        padding = " " * max(last_line_length - len(message), 0)
+        sys.stdout.write(message + padding)
+        sys.stdout.flush()
+        last_line_length = len(message)
+        frame_index += 1
+        stop_event.wait(0.2)
+
+    with state["lock"]:
+        completed = state["completed"]
+
+    message = progress_message(completed, total, start_time, frame_index)
+    padding = " " * max(last_line_length - len(message), 0)
+    sys.stdout.write(message + padding)
+    sys.stdout.flush()
+
+def calculate_all_blocks():
+    total = len(parameter_sets)
+    blocks = [None] * total
+    start_time = time.perf_counter()
+    progress_state = {"completed": 0, "lock": threading.Lock()}
+    stop_progress = threading.Event()
+    progress_thread = threading.Thread(
+        target=progress_spinner,
+        args=(progress_state, total, start_time, stop_progress),
+        daemon=True,
+    )
+    progress_thread.start()
+
+    try:
+        with ProcessPoolExecutor(max_workers=8) as executor:
+            futures = {
+                executor.submit(calculate_block, params): i
+                for i, params in enumerate(parameter_sets)
+            }
+
+            for completed, future in enumerate(as_completed(futures), start=1):
+                blocks[futures[future]] = future.result()
+                with progress_state["lock"]:
+                    progress_state["completed"] = completed
+    finally:
+        stop_progress.set()
+        progress_thread.join()
+
+    sys.stdout.write("\nCalculation complete. Writing ./Output/mu_eff_sweep.csv...\n")
+    sys.stdout.flush()
+    return blocks
+
 if __name__ == "__main__":
-    with ProcessPoolExecutor(max_workers=8) as executor:
-        result_blocks = list(executor.map(calculate_block, parameter_sets,chunksize=1))
+    result_blocks = calculate_all_blocks()
 
     with open("./Output/mu_eff_sweep.csv", "w", newline="") as f:
         writer = csv.writer(f)
@@ -148,6 +229,8 @@ if __name__ == "__main__":
                 ])
 
             writer.writerow(row)
+
+    print("Done.")
 
 
 # mu_values = np.array([mu_eff_integrated(H)[0] for H in H_koe])
